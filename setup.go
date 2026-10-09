@@ -35,7 +35,7 @@ func withDefaults(config Config) Config {
 		config.Service = filepath.Base(os.Args[0])
 	}
 	if config.ConsoleURL == "" {
-		config.ConsoleURL = envOr("TRACEPANEL_CONSOLE_URL", "http://127.0.0.1:8765/")
+		config.ConsoleURL = os.Getenv("TRACEPANEL_CONSOLE_URL")
 	}
 	if config.StoreDir == "" {
 		config.StoreDir = envOr("TRACEPANEL_DIR", ".tracepanel")

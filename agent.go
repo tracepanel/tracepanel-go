@@ -27,6 +27,7 @@ const (
 )
 
 type sender struct {
+	starter   *starter
 	storeDir  string
 	maxTraces int
 	queue     chan *Trace
@@ -35,8 +36,8 @@ type sender struct {
 	warned    bool
 }
 
-func newSender(storeDir string, maxTraces int) *sender {
-	s := &sender{storeDir: storeDir, maxTraces: maxTraces, queue: make(chan *Trace, queueSize)}
+func newSender(starter *starter, maxTraces int) *sender {
+	s := &sender{starter: starter, storeDir: starter.storeDir, maxTraces: maxTraces, queue: make(chan *Trace, queueSize)}
 	go s.run()
 	return s
 }
@@ -69,14 +70,19 @@ func (s *sender) run() {
 func (s *sender) send(batch []*Trace) {
 	if s.conn == nil && time.Now().After(s.retryAt) {
 		s.conn = s.connect()
+		if s.conn == nil && s.starter.ensure() {
+			// None answered: one was started (once per process).
+			s.conn = s.connect()
+		}
 		if s.conn == nil {
 			s.retryAt = time.Now().Add(retryAfter)
 		}
 	}
 	if s.conn == nil {
-		if !s.warned {
+		// Starting one says why it couldn't; an agent named in TRACEPANEL_AGENT that doesn't answer, here.
+		if !s.warned && !autoStart() {
 			s.warned = true
-			log.Printf("tracepanel: no agent for %s, traces are dropped until one runs (`tracepanel dev` in the project)", s.storeDir)
+			log.Printf("tracepanel: no agent at %s: traces are dropped until it answers", agentAddress(s.storeDir))
 		}
 		return
 	}

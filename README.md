@@ -22,7 +22,10 @@ db, err := otelsql.Open("sqlite", path) // in place of sql.Open
 http.ListenAndServe(addr, tracepanel.Wrap(mux))
 ```
 
-Then run the agent in the project's directory, and open http://127.0.0.1:8765/:
+The first request starts the tracepanel agent for the project (`tracepanel-agent` on the `PATH`, which
+`pip install tracepanel` puts there, or `TRACEPANEL_AGENT_BIN`): it runs on its own, serves the console on a free
+port, and exits after 30 minutes with nothing to do. Pages get the badge, which opens the panel and the console. To
+run the agent yourself, in the foreground on http://127.0.0.1:8765/:
 
 ```bash
 tracepanel dev
@@ -47,8 +50,12 @@ N+1 is found by its shape (a lookup by `id` looped from one line) and duplicate 
 | --- | --- | --- |
 | `Service` | | the executable's name |
 | `StoreDir` | `TRACEPANEL_DIR` | `.tracepanel` |
-| `ConsoleURL` | `TRACEPANEL_CONSOLE_URL` | `http://127.0.0.1:8765/` |
-| | `TRACEPANEL_AGENT` | the address in `<StoreDir>/agent.addr`; `tcp:host.docker.internal:PORT` for an app in a container |
+| `ConsoleURL` | `TRACEPANEL_CONSOLE_URL` | where the project's agent serves it (`<StoreDir>/console.addr`) |
+| | `TRACEPANEL_AGENT` | the project's agent, started when missing; an address (`tcp:host.docker.internal:PORT` for an app in a container) or `off` starts none |
+| | `TRACEPANEL_AGENT_BIN` | `tracepanel-agent` on the `PATH` |
+
+Without an agent (none installed, or it couldn't start) the log says why once; responses keep their headers, pages
+get no badge, and traces aren't kept.
 
 The app's own `TracerProvider` keeps its exporters: tracepanel is one more span processor on it.
 

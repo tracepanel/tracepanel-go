@@ -24,7 +24,8 @@ const modulePath = "github.com/tracepanel/tracepanel-go"
 type Config struct {
 	// The project's name on the service map.
 	Service string
-	// Where the agent serves the console (`tracepanel dev`: :8765): the widget loads from there and opens it.
+	// Where the agent serves the console: the widget loads from there and opens it. Empty: the address the project's
+	// agent writes (console.addr), on whatever port it got.
 	ConsoleURL string
 	// The project's store directory (.tracepanel), where the agent leaves its address.
 	StoreDir string
@@ -34,10 +35,12 @@ type Config struct {
 }
 
 type Tracepanel struct {
-	config Config
-	sender *sender
-	mu     sync.Mutex
-	open   map[trace.TraceID]*building
+	config  Config
+	starter *starter
+	console *console
+	sender  *sender
+	mu      sync.Mutex
+	open    map[trace.TraceID]*building
 }
 
 // building is one request's trace while its spans end.
@@ -53,7 +56,14 @@ func New(config Config) *Tracepanel {
 	if config.MaxTraces == 0 {
 		config.MaxTraces = 2000
 	}
-	return &Tracepanel{config: config, sender: newSender(config.StoreDir, config.MaxTraces), open: map[trace.TraceID]*building{}}
+	start := &starter{storeDir: config.StoreDir}
+	return &Tracepanel{
+		config:  config,
+		starter: start,
+		console: &console{configured: config.ConsoleURL, storeDir: config.StoreDir},
+		sender:  newSender(start, config.MaxTraces),
+		open:    map[trace.TraceID]*building{},
+	}
 }
 
 // ---------- the span processor ----------

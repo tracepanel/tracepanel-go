@@ -61,9 +61,17 @@ func (t *Tracepanel) Middleware(next http.Handler) http.Handler {
 			header[key] = values
 		}
 		body := held.body.Bytes()
+		isPage := strings.Contains(header.Get("Content-Type"), "text/html")
+		consoleURL := t.console.URL()
+		if consoleURL == "" && isPage && t.starter.ensure() {
+			// The first page of a fresh project: its agent is starting (once), so the page gets the widget too.
+			consoleURL = t.console.URL()
+		}
 		if id != "" {
 			header.Set("Tracepanel-Id", id)
-			header.Set("Tracepanel-Url", t.config.ConsoleURL+"#/t/"+id)
+			if consoleURL != "" {
+				header.Set("Tracepanel-Url", consoleURL+"#/t/"+id)
+			}
 			noun := "queries"
 			if queries == 1 {
 				noun = "query"
@@ -71,8 +79,9 @@ func (t *Tracepanel) Middleware(next http.Handler) http.Handler {
 			// The agent finds the issues: the widget asks the console for them once the trace is stored.
 			header.Add("Server-Timing", fmt.Sprintf(`db;dur=%.1f;desc="%d %s", app;dur=%.1f, total;dur=%.1f, tracepanel-issues;desc="pending"`,
 				dbMs, queries, noun, max(totalMs-dbMs, 0), totalMs))
-			if strings.Contains(header.Get("Content-Type"), "text/html") {
-				body = inject(body, t.scriptTag(id, r.Method, held.status, queries, dbMs, totalMs))
+			// The panel is the agent's: without one there is nothing to open.
+			if isPage && consoleURL != "" {
+				body = inject(body, t.scriptTag(consoleURL, id, r.Method, held.status, queries, dbMs, totalMs))
 			}
 		}
 		header.Set("Content-Length", strconv.Itoa(len(body)))
@@ -93,8 +102,8 @@ func (h *heldResponse) Write(data []byte) (int, error) { return h.body.Write(dat
 func (h *heldResponse) WriteHeader(status int)         { h.status = status }
 
 // scriptTag is widget.js with the page's own request in data-tracepanel-* attributes.
-func (t *Tracepanel) scriptTag(id, method string, status, queries int, dbMs, totalMs float64) string {
-	api := html.EscapeString(t.config.ConsoleURL)
+func (t *Tracepanel) scriptTag(consoleURL, id, method string, status, queries int, dbMs, totalMs float64) string {
+	api := html.EscapeString(consoleURL)
 	return fmt.Sprintf(`<script src="%swidget.js" data-tracepanel-api="%s" data-tracepanel-id="%s" `+
 		`data-tracepanel-method="%s" data-tracepanel-status="%d" data-tracepanel-total="%.1f" data-tracepanel-db="%.1f" `+
 		`data-tracepanel-queries="%d" data-tracepanel-issues="pending" data-tracepanel-runtime="%s"></script>`,
