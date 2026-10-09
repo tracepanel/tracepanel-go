@@ -31,6 +31,12 @@ run the agent yourself, in the foreground on http://127.0.0.1:8765/:
 tracepanel dev
 ```
 
+For an AI coding agent (Claude Code, Cursor, Codex), the same traces over MCP, from the project's directory:
+
+```bash
+claude mcp add --scope project tracepanel -- tracepanel-agent mcp
+```
+
 ## What it records
 
 - Each request: method, route (the `ServeMux` pattern), status, time, and the handler as a `view` span.
