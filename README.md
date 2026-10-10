@@ -1,11 +1,11 @@
 # tracepanel-go
 
-**See what your Go app is really doing.** tracepanel for Go: every request with its SQL, logs and panics, the
+**See what your Go app is really doing.** Tracepanel for Go: every request with its SQL, logs and panics, the
 N+1 queries and slow SQL in it, in a badge on your pages and a console.
 
 It builds on OpenTelemetry: your app traces itself with OTel (its HTTP server, `database/sql` through
-[otelsql](https://github.com/XSAM/otelsql)), and tracepanel turns each request's spans into a trace for the
-tracepanel agent, which finds the issues, keeps the traces in `.tracepanel/` and serves the console.
+[otelsql](https://github.com/XSAM/otelsql)), and Tracepanel turns each request's spans into a trace for the
+Tracepanel agent, which finds the issues, keeps the traces in `.tracepanel/` and serves the console.
 
 ```bash
 go get github.com/tracepanel/tracepanel-go
@@ -22,7 +22,7 @@ db, err := otelsql.Open("sqlite", path) // in place of sql.Open
 http.ListenAndServe(addr, tracepanel.Wrap(mux))
 ```
 
-The first request starts the tracepanel agent for the project (`tracepanel-agent` on the `PATH`, which
+The first request starts the Tracepanel agent for the project (`tracepanel-agent` on the `PATH`, which
 `pip install tracepanel` puts there, or `TRACEPANEL_AGENT_BIN`): it runs on its own, serves the console on a free
 port, and exits after 30 minutes with nothing to do. Pages get the badge, which opens the panel and the console. To
 run the agent yourself, in the foreground on http://127.0.0.1:8765/:
@@ -63,7 +63,7 @@ N+1 is found by its shape (a lookup by `id` looped from one line) and duplicate 
 Without an agent (none installed, or it couldn't start) the log says why once; responses keep their headers, pages
 get no badge, and traces aren't kept.
 
-The app's own `TracerProvider` keeps its exporters: tracepanel is one more span processor on it.
+The app's own `TracerProvider` keeps its exporters: Tracepanel is one more span processor on it.
 
 ## Development
 
