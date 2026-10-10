@@ -42,11 +42,11 @@ func TestNoAgentToStart(t *testing.T) {
 	}
 }
 
-// The real agent, when a build of the sibling tracepanel-agent checkout is there (or $TRACEPANEL_AGENT_BIN).
+// The real agent, when a build of the sibling tracepanel checkout is there (or $TRACEPANEL_AGENT_BIN).
 func TestTheFirstTraceStartsTheAgent(t *testing.T) {
 	executable := os.Getenv("TRACEPANEL_AGENT_BIN")
 	if executable == "" {
-		executable = filepath.Join("..", "tracepanel-agent", "target", "debug", agentBinary)
+		executable = filepath.Join("..", "tracepanel", "target", "debug", agentBinary)
 	}
 	if _, err := os.Stat(executable); err != nil || runtime.GOOS == "windows" {
 		t.Skip("no tracepanel-agent build")
