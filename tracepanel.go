@@ -1,7 +1,7 @@
 // Package tracepanel is tracepanel for Go, on top of OpenTelemetry: the app traces itself with OTel (its HTTP server,
 // database/sql through otelsql), and tracepanel's span processor turns each request's spans into a tracepanel trace,
 // sent to the tracepanel agent, which finds its issues and serves the console. Its middleware adds what the badge
-// reads (Server-Timing, Tracepanel-Id) and puts widget.js into HTML pages.
+// reads (Server-Timing, Tracepanel-Id) and puts widget.min.js into HTML pages.
 package tracepanel
 
 import (

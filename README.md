@@ -43,7 +43,7 @@ claude mcp add --scope project tracepanel -- tracepanel-agent mcp
 - SQL through otelsql: the statement, its fingerprint and the line of your code that ran it.
 - `slog` records, attached to the request that logged them.
 - Panics: the value, the stack with the source around your frames; the request answers 500.
-- The badge's headers on every response (`Tracepanel-Id`, `Server-Timing`) and `widget.js` in HTML pages.
+- The badge's headers on every response (`Tracepanel-Id`, `Server-Timing`) and `widget.min.js` in HTML pages.
 
 The agent finds the issues: N+1 queries, slow SQL, errors. otelsql doesn't record a statement's parameters, so an
 N+1 is found by its shape (a lookup by `id` looped from one line) and duplicate queries aren't reported.

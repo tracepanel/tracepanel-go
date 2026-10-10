@@ -22,7 +22,7 @@ import (
 var tracer = otel.Tracer("tracepanel")
 
 // Middleware traces every request as an OTel server span, and gives each response what the widget reads: the trace's
-// id and timing in headers, and widget.js in an HTML page. The response is held until the handler returns (a JSON
+// id and timing in headers, and widget.min.js in an HTML page. The response is held until the handler returns (a JSON
 // answer or a page; not for streaming).
 func (t *Tracepanel) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,10 +101,10 @@ func (h *heldResponse) Header() http.Header            { return h.header }
 func (h *heldResponse) Write(data []byte) (int, error) { return h.body.Write(data) }
 func (h *heldResponse) WriteHeader(status int)         { h.status = status }
 
-// scriptTag is widget.js with the page's own request in data-tracepanel-* attributes.
+// scriptTag is widget.min.js with the page's own request in data-tracepanel-* attributes.
 func (t *Tracepanel) scriptTag(consoleURL, id, method string, status, queries int, dbMs, totalMs float64) string {
 	api := html.EscapeString(consoleURL)
-	return fmt.Sprintf(`<script src="%swidget.js" data-tracepanel-api="%s" data-tracepanel-id="%s" `+
+	return fmt.Sprintf(`<script src="%swidget.min.js" data-tracepanel-api="%s" data-tracepanel-id="%s" `+
 		`data-tracepanel-method="%s" data-tracepanel-status="%d" data-tracepanel-total="%.1f" data-tracepanel-db="%.1f" `+
 		`data-tracepanel-queries="%d" data-tracepanel-issues="pending" data-tracepanel-runtime="%s"></script>`,
 		api, api, id, html.EscapeString(method), status, totalMs, dbMs, queries, html.EscapeString(runtimeLabel()))
