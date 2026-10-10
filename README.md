@@ -71,4 +71,3 @@ The app's own `TracerProvider` keeps its exporters: Tracepanel is one more span 
 make lint    # gofmt, go vet, go test
 ```
 
-`tracepanel-examples/go-api` is a books API using it (Swagger UI with the panel under it).
