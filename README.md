@@ -70,4 +70,3 @@ The app's own `TracerProvider` keeps its exporters: Tracepanel is one more span 
 ```bash
 make lint    # gofmt, go vet, go test
 ```
-
