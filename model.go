@@ -3,6 +3,7 @@ package tracepanel
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"sort"
 	"strings"
 	"time"
 )
@@ -93,4 +94,51 @@ func newID() string {
 		out.WriteByte(crockford[digit&31])
 	}
 	return out.String()
+}
+
+// The most spans a trace is sent with, as the agent stores it; the rest are counted (tracepanel.dropped_spans).
+const maxSpans = 2000
+
+// The most log records a trace keeps; the rest are counted (tracepanel.dropped_logs).
+const maxLogs = 1000
+
+// countDropped adds n to a trace's tally of what went unrecorded.
+func countDropped(trace *Trace, key string, n int) {
+	if trace.Attrs == nil {
+		trace.Attrs = Attrs{}
+	}
+	before, _ := trace.Attrs[key].(int)
+	trace.Attrs[key] = before + n
+}
+
+// limited cuts a trace to maxSpans: its earliest spans, its roots always. Spans end children first, so a cut as they
+// end would keep children whose parent went: by start, a parent always comes before its children.
+func limited(trace *Trace) *Trace {
+	if len(trace.Spans) <= maxSpans {
+		return trace
+	}
+	order := make([]int, len(trace.Spans))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		x, y := trace.Spans[order[a]], trace.Spans[order[b]]
+		if (x.ParentID == nil) != (y.ParentID == nil) {
+			return x.ParentID == nil
+		}
+		return x.Start < y.Start
+	})
+	keep := make(map[int]bool, maxSpans)
+	for _, index := range order[:maxSpans] {
+		keep[index] = true
+	}
+	spans := make([]Span, 0, maxSpans)
+	for index, span := range trace.Spans {
+		if keep[index] {
+			spans = append(spans, span)
+		}
+	}
+	countDropped(trace, "tracepanel.dropped_spans", len(trace.Spans)-len(spans))
+	trace.Spans = spans
+	return trace
 }

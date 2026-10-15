@@ -184,10 +184,14 @@ func (h *logHandler) Handle(ctx context.Context, record slog.Record) error {
 			return true
 		})
 		h.t.mu.Lock()
-		b.trace.Logs = append(b.trace.Logs, Log{
-			SpanID: h.t.spanID(b, ctx), Time: micros(record.Time), Level: levelName(record.Level), Logger: "app",
-			Message: record.Message, Attrs: attrs,
-		})
+		if len(b.trace.Logs) >= maxLogs {
+			countDropped(b.trace, "tracepanel.dropped_logs", 1)
+		} else {
+			b.trace.Logs = append(b.trace.Logs, Log{
+				SpanID: h.t.spanID(b, ctx), Time: micros(record.Time), Level: levelName(record.Level), Logger: "app",
+				Message: record.Message, Attrs: attrs,
+			})
+		}
 		h.t.mu.Unlock()
 	}
 	return h.next.Handle(ctx, record)

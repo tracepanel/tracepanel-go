@@ -120,7 +120,7 @@ func (t *Tracepanel) OnEnd(span sdktrace.ReadOnlySpan) {
 	delete(t.open, sc.TraceID())
 	t.mu.Unlock()
 	t.finish(b, span)
-	t.sender.submit(b.trace)
+	t.sender.submit(limited(b.trace))
 }
 
 func (t *Tracepanel) Shutdown(context.Context) error   { return nil }
