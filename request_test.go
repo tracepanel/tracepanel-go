@@ -104,7 +104,8 @@ func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 		tx, _ := db.BeginTx(ctx, nil)
 		_, _ = tx.ExecContext(ctx, "UPDATE authors SET seen = now() WHERE id = $1", 7)
 		_ = tx.Commit()
-		slog.New(LogHandler(slog.NewTextHandler(io.Discard, nil))).InfoContext(ctx, "author shown", "author", 7)
+		slog.New(LogHandler(slog.NewTextHandler(io.Discard, nil))).InfoContext(ctx, "author shown", "books", 3,
+			slog.Group("client", "api_key", "k-123", "region", "eu"))
 		request, _ := http.NewRequestWithContext(ctx, "GET", other.URL+"/rates", nil)
 		response, err := (&http.Client{Transport: Transport(http.DefaultTransport)}).Do(request)
 		if err == nil {
@@ -167,7 +168,8 @@ func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 	}
 
 	if len(doc.Logs) != 1 || doc.Logs[0].Message != "author shown" || doc.Logs[0].Level != "info" ||
-		!equalJSON(doc.Logs[0].Attrs["extra.author"], 7) || *doc.Logs[0].SpanID != views[0].ID {
+		!equalJSON(doc.Logs[0].Attrs["extra.books"], 3) || *doc.Logs[0].SpanID != views[0].ID ||
+		doc.Logs[0].Attrs["extra.client.api_key"] != "********" || doc.Logs[0].Attrs["extra.client.region"] != "eu" {
 		t.Errorf("logs: %+v", doc.Logs)
 	}
 

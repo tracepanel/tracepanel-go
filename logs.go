@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -64,7 +65,12 @@ func (h *logHandler) Handle(ctx context.Context, record slog.Record) error {
 	return h.next.Handle(ctx, record)
 }
 
-// flatten names a group's attributes by their path: extra.user.id.
+// secret is a field name that looks like it holds one: its value is kept as mask.
+var secret = regexp.MustCompile(`(?i)pass(word|wd)?|secret|token|api_?key|auth|cookie|session|csrf|signature|private`)
+
+const mask = "********"
+
+// flatten names a group's attributes by their path: extra.user.id. A secret-looking one keeps the mask.
 func flatten(attrs Attrs, prefix string, attr slog.Attr) {
 	value := attr.Value.Resolve()
 	if value.Kind() == slog.KindGroup {
@@ -74,6 +80,10 @@ func flatten(attrs Attrs, prefix string, attr slog.Attr) {
 		return
 	}
 	if attr.Key == "" {
+		return
+	}
+	if secret.MatchString(attr.Key) {
+		attrs[prefix+attr.Key] = mask
 		return
 	}
 	attrs[prefix+attr.Key] = logValue(value)
