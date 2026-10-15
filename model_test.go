@@ -1,51 +1,46 @@
 package tracepanel
 
 import (
-	"fmt"
 	"testing"
+	"time"
 )
 
-// deep is a trace of n spans, each the child of the one before, ending children first as OpenTelemetry ends them.
-func deep(n int) *Trace {
-	spans := make([]Span, 0, n)
-	for i := n - 1; i >= 0; i-- {
-		var parent *string
-		if i > 0 {
-			id := fmt.Sprintf("s%d", i-1)
-			parent = &id
-		}
-		spans = append(spans, Span{ID: fmt.Sprintf("s%d", i), ParentID: parent, Kind: "function", Start: int64(i)})
+func TestARunawayTraceKeepsItsFirstSpansAndRecordsAndCountsTheRest(t *testing.T) {
+	rec := newRecording("http", "http", "GET /", Attrs{})
+	for range maxSpans + 100 {
+		rec.end(rec.begin("", "function", "step", Attrs{}), false)
 	}
-	return &Trace{ID: "T", Attrs: Attrs{}, Spans: spans}
-}
-
-func TestARunawayTraceIsCutToItsEarliestSpansEachWithItsParent(t *testing.T) {
-	trace := limited(deep(maxSpans + 500))
-	kept := map[string]bool{}
-	for _, span := range trace.Spans {
-		kept[span.ID] = true
+	for range maxLogs + 5 {
+		rec.log(logDoc{Level: "info", Message: "again", Attrs: Attrs{}})
 	}
 
-	if len(trace.Spans) != maxSpans {
-		t.Fatalf("kept %d spans, want %d", len(trace.Spans), maxSpans)
+	doc := rec.finish()
+
+	if len(doc.Spans) != maxSpans || len(doc.Logs) != maxLogs {
+		t.Fatalf("kept %d spans and %d records", len(doc.Spans), len(doc.Logs))
 	}
-	if !kept["s0"] {
+	if doc.Spans[0].ID != rec.root.ID {
 		t.Fatal("the root went")
 	}
-	for _, span := range trace.Spans {
-		if span.ParentID != nil && !kept[*span.ParentID] {
-			t.Fatalf("%s kept without its parent %s", span.ID, *span.ParentID)
-		}
-	}
-	if got := trace.Attrs["tracepanel.dropped_spans"]; got != 500 {
-		t.Fatalf("dropped_spans = %v, want 500", got)
+	// The root is among the spans kept: 101 of the steps went.
+	if got, want := doc.Attrs, (Attrs{"tracepanel.dropped_spans": 101, "tracepanel.dropped_logs": 5}); !equalJSON(got, want) {
+		t.Fatalf("attrs = %v, want %v", got, want)
 	}
 }
 
-func TestATraceWithinTheLimitIsSentAsItIs(t *testing.T) {
-	trace := limited(deep(3))
+func TestASpanStillOpenWhenItsTraceEndsLastsUntilThen(t *testing.T) {
+	rec := newRecording("http", "http", "GET /", Attrs{})
+	open := rec.begin("", "function", "never ended", Attrs{})
+	time.Sleep(2 * time.Millisecond)
 
-	if len(trace.Spans) != 3 || len(trace.Attrs) != 0 {
-		t.Fatalf("got %d spans and attrs %v", len(trace.Spans), trace.Attrs)
+	doc := rec.finish()
+
+	if doc.Spans[1].ID != open.ID || doc.Spans[1].Duration < 2000 {
+		t.Fatalf("span %+v in a trace of %d µs", doc.Spans[1], doc.Duration)
+	}
+	// Nothing joins a trace that ended.
+	rec.log(logDoc{Message: "late"})
+	if len(rec.doc.Logs) != 0 {
+		t.Fatal("a record joined an ended trace")
 	}
 }

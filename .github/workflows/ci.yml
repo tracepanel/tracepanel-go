@@ -1,32 +1,40 @@
 name: CI
 
+# gofmt, go vet and the tests with the race detector, on every Go the module supports.
 on:
   push:
     branches: [main]
   pull_request:
 
-permissions:
-  contents: read
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Go ${{ matrix.go }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        # The module's minimum (go.mod) and the newest.
-        go: ["1.26", "stable"]
+        go: ["1.26", "1.27"]
+        os: [ubuntu-latest]
+        include:
+          - go: "1.27"
+            os: macos-latest
+          - go: "1.27"
+            os: windows-latest
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-
-      - run: make lint
+      - name: gofmt
+        if: runner.os != 'Windows'
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test -race ./...

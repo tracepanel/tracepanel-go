@@ -1,0 +1,61 @@
+name: Release
+
+# A tag that names a version (v0.3.0, as Go modules name them) releases it: once CI has passed on the tagged commit,
+# and the tag agrees with Version and with the agent's checksums, it gets a GitHub release, and the Go module proxy
+# is asked for it, so pkg.go.dev and `go get` have it at once. Nothing is uploaded: a Go module is its tag.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI passed on this commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 120); do
+            result=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push" \
+              --jq '.workflow_runs[0] | "\(.status) \(.conclusion)"')
+            case "$result" in
+              "completed success") echo "CI passed on $GITHUB_SHA" && exit 0 ;;
+              completed*) echo "::error::CI on $GITHUB_SHA: $result" && exit 1 ;;
+              "null null") [ "$attempt" -ge 10 ] && echo "::error::no CI run of main on $GITHUB_SHA" && exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "::error::CI on $GITHUB_SHA still runs" && exit 1
+
+  release:
+    name: Release on GitHub and the module proxy
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag is the version, and the agent's checksums are of it
+        run: |
+          version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' version.go)
+          integrity=$(sed -n 's/^const integrityVersion = "\(.*\)"$/\1/p' integrity.go)
+          if [ "v$version" != "$GITHUB_REF_NAME" ] || [ "$integrity" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, Version $version, checksums of $integrity: they must agree"
+            exit 1
+          fi
+      - name: GitHub release, its notes from the changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v head="## $version " 'index($0, head) == 1 {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+      - name: The module proxy fetches it
+        run: curl --fail --silent --show-error "https://proxy.golang.org/github.com/tracepanel/tracepanel-go/@v/$GITHUB_REF_NAME.info"

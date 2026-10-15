@@ -3,31 +3,31 @@ package tracepanel
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"sort"
 	"strings"
 	"time"
 )
 
-// The trace as every tracepanel SDK sends it to the agent.
+// The trace as every Tracepanel SDK sends it to the agent.
 
+// Attrs are a trace's or a span's attributes, named as OpenTelemetry names them where it has a name.
 type Attrs map[string]any
 
-type Trace struct {
-	ID       string  `json:"id"`
-	Kind     string  `json:"kind"`
-	Name     string  `json:"name"`
-	Start    int64   `json:"start"`
-	Duration int64   `json:"duration"`
-	Status   string  `json:"status"`
-	Attrs    Attrs   `json:"attrs"`
-	Spans    []Span  `json:"spans"`
-	Logs     []Log   `json:"logs"`
-	Errors   []Error `json:"errors"`
-	Links    []any   `json:"links"`
-	Issues   []any   `json:"issues"`
+type traceDoc struct {
+	ID       string     `json:"id"`
+	Kind     string     `json:"kind"`
+	Name     string     `json:"name"`
+	Start    int64      `json:"start"`
+	Duration int64      `json:"duration"`
+	Status   string     `json:"status"`
+	Attrs    Attrs      `json:"attrs"`
+	Spans    []spanDoc  `json:"spans"`
+	Logs     []logDoc   `json:"logs"`
+	Errors   []errorDoc `json:"errors"`
+	Links    []linkDoc  `json:"links"`
+	Issues   []any      `json:"issues"`
 }
 
-type Span struct {
+type spanDoc struct {
 	ID       string  `json:"id"`
 	ParentID *string `json:"parent_id"`
 	Kind     string  `json:"kind"`
@@ -36,9 +36,11 @@ type Span struct {
 	Duration int64   `json:"duration"`
 	Status   string  `json:"status"`
 	Attrs    Attrs   `json:"attrs"`
+	// Still running: when its trace ends first, it lasts until then.
+	open bool
 }
 
-type Log struct {
+type logDoc struct {
 	SpanID    *string `json:"span_id"`
 	Time      int64   `json:"time"`
 	Level     string  `json:"level"`
@@ -48,17 +50,17 @@ type Log struct {
 	Attrs     Attrs   `json:"attrs"`
 }
 
-type Error struct {
-	SpanID  *string `json:"span_id"`
-	Time    int64   `json:"time"`
-	Type    string  `json:"type"`
-	Message string  `json:"message"`
-	Handled bool    `json:"handled"`
-	Frames  []Frame `json:"frames"`
-	Chain   []any   `json:"chain"`
+type errorDoc struct {
+	SpanID  *string    `json:"span_id"`
+	Time    int64      `json:"time"`
+	Type    string     `json:"type"`
+	Message string     `json:"message"`
+	Handled bool       `json:"handled"`
+	Frames  []frameDoc `json:"frames"`
+	Chain   []any      `json:"chain"`
 }
 
-type Frame struct {
+type frameDoc struct {
 	Filename     string            `json:"filename"`
 	Module       string            `json:"module"`
 	Function     string            `json:"function"`
@@ -67,6 +69,13 @@ type Frame struct {
 	ContextStart *int              `json:"context_start"`
 	Context      []string          `json:"context"`
 	Locals       map[string]string `json:"locals"`
+}
+
+// linkDoc ties a trace to another one: a task to the trace that started it (enqueued_by), at the span that did.
+type linkDoc struct {
+	Kind    string `json:"kind"`
+	TraceID string `json:"trace_id"`
+	SpanID  string `json:"span_id"`
 }
 
 func micros(t time.Time) int64 { return t.UnixMicro() }
@@ -101,44 +110,3 @@ const maxSpans = 2000
 
 // The most log records a trace keeps; the rest are counted (tracepanel.dropped_logs).
 const maxLogs = 1000
-
-// countDropped adds n to a trace's tally of what went unrecorded.
-func countDropped(trace *Trace, key string, n int) {
-	if trace.Attrs == nil {
-		trace.Attrs = Attrs{}
-	}
-	before, _ := trace.Attrs[key].(int)
-	trace.Attrs[key] = before + n
-}
-
-// limited cuts a trace to maxSpans: its earliest spans, its roots always. Spans end children first, so a cut as they
-// end would keep children whose parent went: by start, a parent always comes before its children.
-func limited(trace *Trace) *Trace {
-	if len(trace.Spans) <= maxSpans {
-		return trace
-	}
-	order := make([]int, len(trace.Spans))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool {
-		x, y := trace.Spans[order[a]], trace.Spans[order[b]]
-		if (x.ParentID == nil) != (y.ParentID == nil) {
-			return x.ParentID == nil
-		}
-		return x.Start < y.Start
-	})
-	keep := make(map[int]bool, maxSpans)
-	for _, index := range order[:maxSpans] {
-		keep[index] = true
-	}
-	spans := make([]Span, 0, maxSpans)
-	for index, span := range trace.Spans {
-		if keep[index] {
-			spans = append(spans, span)
-		}
-	}
-	countDropped(trace, "tracepanel.dropped_spans", len(trace.Spans)-len(spans))
-	trace.Spans = spans
-	return trace
-}

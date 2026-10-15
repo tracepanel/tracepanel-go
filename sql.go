@@ -15,9 +15,11 @@ var (
 	count      = regexp.MustCompile(`(?i)^\s*SELECT\s+COUNT\(`)
 )
 
-func statement(sql string) string { return strings.TrimSpace(whitespace.ReplaceAllString(sql, " ")) }
+func statementText(sql string) string {
+	return strings.TrimSpace(whitespace.ReplaceAllString(sql, " "))
+}
 
-func fingerprint(sql string) string { return inList.ReplaceAllString(statement(sql), "IN (...)") }
+func fingerprint(sql string) string { return inList.ReplaceAllString(statementText(sql), "IN (...)") }
 
 func spanName(sql string) string {
 	fields := strings.Fields(sql)

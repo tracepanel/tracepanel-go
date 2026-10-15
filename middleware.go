@@ -1,130 +1,89 @@
 package tracepanel
 
 import (
+	"bufio"
 	"bytes"
-	"context"
+	"errors"
 	"fmt"
 	"html"
-	"log/slog"
+	"net"
 	"net/http"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
-var tracer = otel.Tracer("tracepanel")
+// Wrap is Tracepanel in one line, around the app's handler (its ServeMux):
+//
+//	http.ListenAndServe(addr, tracepanel.Wrap(mux))
+//
+// It turns Tracepanel on (Setup), and traces every request: its handler on a ServeMux is a `view` span named after
+// its function, and the response gets what the badge reads. With TRACEPANEL_ENABLED=0, it returns the handler as it
+// is.
+func Wrap(handler http.Handler, config ...Config) http.Handler {
+	t := Setup(config...)
+	if t == nil {
+		return handler
+	}
+	return t.Middleware(handler)
+}
 
-// Middleware traces every request as an OTel server span, and gives each response what the widget reads: the trace's
-// id and timing in headers, and widget.min.js in an HTML page. The response is held until the handler returns (a JSON
-// answer or a page; not for streaming).
+// Middleware traces every request, and gives each response what the badge reads: the trace's id and timing in
+// headers, and the badge's script in an HTML page. The response is held until the handler returns; one the handler
+// flushes (a stream) or takes over (a WebSocket) goes out as it is written, with the headers and without the badge.
 func (t *Tracepanel) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		ctx, span := tracer.Start(r.Context(), r.Method+" "+r.URL.Path, trace.WithSpanKind(trace.SpanKindServer),
-			trace.WithAttributes(attribute.String("http.request.method", r.Method), attribute.String("url.path", r.URL.Path)))
-		req := r.WithContext(ctx)
-		held := &heldResponse{header: http.Header{}, status: http.StatusOK}
+		attrs := Attrs{"http.method": r.Method, "http.path": r.URL.Path, "tracepanel.framework": "net/http"}
+		for key, value := range incoming(r.Header.Get(traceparentHeader)) {
+			attrs[key] = value
+		}
+		rec := t.begin("http", "http", r.Method+" "+r.URL.Path, attrs)
+		req := r.WithContext(within(r.Context(), rec, rec.root.ID))
+		held := &heldResponse{w: w, header: http.Header{}, status: http.StatusOK, t: t, rec: rec}
 		func() {
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					pcs := make([]uintptr, 64)
-					t.recordPanic(ctx, recovered, pcs[:runtime.Callers(3, pcs)])
-					span.SetStatus(codes.Error, fmt.Sprint(recovered))
-					held.header = http.Header{"Content-Type": {"text/plain; charset=utf-8"}}
-					held.body.Reset()
-					held.body.WriteString("Internal Server Error\n")
-					held.status = http.StatusInternalServerError
+					if recovered == http.ErrAbortHandler {
+						panic(recovered)
+					}
+					recordPanic(rec, recovered, callers(1))
+					held.failed()
 				}
 			}()
 			t.serve(held, req, next)
 		}()
-		// ServeMux sets the matched pattern on the request it routed: "GET /books/{id}".
-		route := r.URL.Path
-		if _, path, found := strings.Cut(req.Pattern, " "); found {
-			route = path
-		} else if req.Pattern != "" {
-			route = req.Pattern
+		route := t.route(req)
+		rec.rename(r.Method + " " + route)
+		rec.set("http.route", route)
+		rec.set("http.status_code", held.status)
+		if held.status >= 500 {
+			rec.fail()
 		}
-		span.SetName(r.Method + " " + route)
-		span.SetAttributes(attribute.String("http.route", route), attribute.Int("http.response.status_code", held.status))
-
-		id, queries, dbMs, totalMs := t.timing(ctx, start)
-		header := w.Header()
-		for key, values := range held.header {
-			header[key] = values
-		}
-		body := held.body.Bytes()
-		isPage := strings.Contains(header.Get("Content-Type"), "text/html")
-		consoleURL := t.console.URL()
-		if consoleURL == "" && isPage && t.starter.ensure() {
-			// The first page of a fresh project: its agent is starting (once), so the page gets the widget too.
-			consoleURL = t.console.URL()
-		}
-		if id != "" {
-			header.Set("Tracepanel-Id", id)
-			if consoleURL != "" {
-				header.Set("Tracepanel-Url", consoleURL+"#/t/"+id)
-			}
-			noun := "queries"
-			if queries == 1 {
-				noun = "query"
-			}
-			// The agent finds the issues: the widget asks the console for them once the trace is stored.
-			header.Add("Server-Timing", fmt.Sprintf(`db;dur=%.1f;desc="%d %s", app;dur=%.1f, total;dur=%.1f, tracepanel-issues;desc="pending"`,
-				dbMs, queries, noun, max(totalMs-dbMs, 0), totalMs))
-			// The panel is the agent's: without one there is nothing to open.
-			if isPage && consoleURL != "" {
-				body = inject(body, t.scriptTag(consoleURL, id, r.Method, held.status, queries, dbMs, totalMs))
-			}
-		}
-		header.Set("Content-Length", strconv.Itoa(len(body)))
-		w.WriteHeader(held.status)
-		_, _ = w.Write(body)
-		span.End()
+		held.finish()
+		t.finish(rec)
 	})
 }
 
-type heldResponse struct {
-	header http.Header
-	body   bytes.Buffer
-	status int
-}
-
-func (h *heldResponse) Header() http.Header            { return h.header }
-func (h *heldResponse) Write(data []byte) (int, error) { return h.body.Write(data) }
-func (h *heldResponse) WriteHeader(status int)         { h.status = status }
-
-// scriptTag is widget.min.js with the page's own request in data-tracepanel-* attributes.
-func (t *Tracepanel) scriptTag(consoleURL, id, method string, status, queries int, dbMs, totalMs float64) string {
-	api := html.EscapeString(consoleURL)
-	return fmt.Sprintf(`<script src="%swidget.min.js" data-tracepanel-api="%s" data-tracepanel-id="%s" `+
-		`data-tracepanel-method="%s" data-tracepanel-status="%d" data-tracepanel-total="%.1f" data-tracepanel-db="%.1f" `+
-		`data-tracepanel-queries="%d" data-tracepanel-issues="pending" data-tracepanel-runtime="%s"></script>`,
-		api, api, id, html.EscapeString(method), status, totalMs, dbMs, queries, html.EscapeString(runtimeLabel()))
-}
-
-// inject puts the tag first in <head> (the widget wraps fetch before the page's scripts keep a reference to it).
-func inject(page []byte, tag string) []byte {
-	lower := bytes.ToLower(page)
-	if at := bytes.Index(lower, []byte("<head>")); at >= 0 {
-		at += len("<head>")
-		return append(append(append([]byte{}, page[:at]...), tag...), page[at:]...)
+// route is the request's route: the app's Route, else the pattern ServeMux matched ("GET /books/{id}" names
+// /books/{id}), else the path.
+func (t *Tracepanel) route(r *http.Request) string {
+	if t.config.Route != nil {
+		if route := t.config.Route(r); route != "" {
+			return route
+		}
 	}
-	if at := bytes.LastIndex(lower, []byte("</body>")); at >= 0 {
-		return append(append(append([]byte{}, page[:at]...), tag...), page[at:]...)
+	if _, path, found := strings.Cut(r.Pattern, " "); found {
+		return path
 	}
-	return page
+	if r.Pattern != "" {
+		return r.Pattern
+	}
+	return r.URL.Path
 }
 
 // serve runs the request through the app's handler; on a ServeMux, the handler it routes to is a `view` span named
-// after its function, as Django's view span is.
+// after its function.
 func (t *Tracepanel) serve(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	mux, ok := next.(*http.ServeMux)
 	if !ok {
@@ -133,18 +92,21 @@ func (t *Tracepanel) serve(w http.ResponseWriter, r *http.Request, next http.Han
 	}
 	handler, pattern := mux.Handler(r)
 	name := handlerName(handler)
-	if pattern == "" || name == "" {
+	s := scopeOf(r.Context())
+	if pattern == "" || name == "" || s == nil {
 		// No route (404) or not a function (a file server): nothing to name.
 		next.ServeHTTP(w, r)
 		return
 	}
-	ctx, span := tracer.Start(r.Context(), shortFunction(name),
-		trace.WithAttributes(attribute.String("tracepanel.kind", "view"), attribute.String("code.function", name)))
-	defer span.End()
-	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("code.function", name))
-	routed := r.WithContext(ctx)
+	span := s.rec.begin(s.span, "view", shortFunction(name), Attrs{"code.function": name})
+	s.rec.setView(span.ID)
+	s.rec.set("code.view", name)
+	failed := true
+	defer func() { s.rec.end(span, failed) }()
+	routed := r.WithContext(within(r.Context(), s.rec, span.ID))
 	next.ServeHTTP(w, routed)
-	// The mux sets the matched pattern on the request it routed; the middleware names the request after it.
+	failed = false
+	// The mux sets the matched pattern on the request it routed: the middleware names the request after it.
 	r.Pattern = routed.Pattern
 }
 
@@ -158,62 +120,177 @@ func handlerName(handler http.Handler) string {
 	return strings.TrimSuffix(runtime.FuncForPC(value.Pointer()).Name(), "-fm")
 }
 
-// ---------- logs ----------
-
-// LogHandler adds the app's slog records to the trace of the request they were logged in, then passes them on.
-func (t *Tracepanel) LogHandler(next slog.Handler) slog.Handler { return &logHandler{t: t, next: next} }
-
-type logHandler struct {
-	t     *Tracepanel
-	next  slog.Handler
-	attrs []slog.Attr
+// heldResponse keeps the handler's response until it returns, to add the trace's headers and the badge.
+type heldResponse struct {
+	w       http.ResponseWriter
+	header  http.Header
+	body    bytes.Buffer
+	status  int
+	wrote   bool
+	t       *Tracepanel
+	rec     *recording
+	passing bool // flushed or hijacked: written through as it comes
 }
 
-func (h *logHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.next.Enabled(ctx, level)
-}
-
-func (h *logHandler) Handle(ctx context.Context, record slog.Record) error {
-	if b := h.t.current(ctx); b != nil {
-		attrs := Attrs{}
-		for _, attr := range h.attrs {
-			attrs["extra."+attr.Key] = attr.Value.String()
-		}
-		record.Attrs(func(attr slog.Attr) bool {
-			attrs["extra."+attr.Key] = attr.Value.String()
-			return true
-		})
-		h.t.mu.Lock()
-		if len(b.trace.Logs) >= maxLogs {
-			countDropped(b.trace, "tracepanel.dropped_logs", 1)
-		} else {
-			b.trace.Logs = append(b.trace.Logs, Log{
-				SpanID: h.t.spanID(b, ctx), Time: micros(record.Time), Level: levelName(record.Level), Logger: "app",
-				Message: record.Message, Attrs: attrs,
-			})
-		}
-		h.t.mu.Unlock()
+func (h *heldResponse) Header() http.Header {
+	if h.passing {
+		return h.w.Header()
 	}
-	return h.next.Handle(ctx, record)
+	return h.header
 }
 
-func (h *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &logHandler{t: h.t, next: h.next.WithAttrs(attrs), attrs: append(append([]slog.Attr{}, h.attrs...), attrs...)}
-}
-
-func (h *logHandler) WithGroup(name string) slog.Handler {
-	return &logHandler{t: h.t, next: h.next.WithGroup(name), attrs: h.attrs}
-}
-
-func levelName(level slog.Level) string {
-	switch {
-	case level >= slog.LevelError:
-		return "error"
-	case level >= slog.LevelWarn:
-		return "warning"
-	case level >= slog.LevelInfo:
-		return "info"
-	default:
-		return "debug"
+func (h *heldResponse) Write(data []byte) (int, error) {
+	if !h.wrote {
+		h.WriteHeader(http.StatusOK)
 	}
+	if h.passing {
+		return h.w.Write(data)
+	}
+	return h.body.Write(data)
+}
+
+func (h *heldResponse) WriteHeader(status int) {
+	if h.wrote {
+		return
+	}
+	h.wrote = true
+	h.status = status
+	if h.passing {
+		h.w.WriteHeader(status)
+	}
+}
+
+// Flush starts the response now: a stream (server-sent events, a long download) is written as it comes.
+func (h *heldResponse) Flush() {
+	h.pass()
+	if flusher, ok := h.w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Hijack hands the connection to the handler (a WebSocket): what it does then is its own.
+func (h *heldResponse) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := h.w.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("tracepanel: the response can't be hijacked")
+	}
+	conn, buffer, err := hijacker.Hijack()
+	if err == nil {
+		h.passing = true
+		h.wrote = true
+	}
+	return conn, buffer, err
+}
+
+// pass writes what is held, with the trace's headers, and every later write goes straight out.
+func (h *heldResponse) pass() {
+	if h.passing {
+		return
+	}
+	h.passing = true
+	header := h.w.Header()
+	for key, values := range h.header {
+		header[key] = values
+	}
+	h.headers(header)
+	if h.wrote {
+		h.w.WriteHeader(h.status)
+	}
+	if h.body.Len() > 0 {
+		_, _ = h.w.Write(h.body.Bytes())
+		h.body.Reset()
+	}
+}
+
+// failed answers 500 in place of what the handler wrote before it panicked.
+func (h *heldResponse) failed() {
+	h.status = http.StatusInternalServerError
+	if h.passing {
+		return
+	}
+	h.wrote = true
+	h.header = http.Header{"Content-Type": {"text/plain; charset=utf-8"}}
+	h.body.Reset()
+	h.body.WriteString("Internal Server Error\n")
+}
+
+// finish writes the held response, with the trace's headers and, in an HTML page, the badge.
+func (h *heldResponse) finish() {
+	if h.passing {
+		return
+	}
+	header := h.w.Header()
+	for key, values := range h.header {
+		header[key] = values
+	}
+	h.headers(header)
+	body := h.body.Bytes()
+	if strings.Contains(header.Get("Content-Type"), "text/html") && header.Get("Content-Encoding") == "" {
+		if consoleURL := h.consoleURL(true); consoleURL != "" {
+			queries, dbMs, totalMs := h.rec.timing()
+			body = inject(body, scriptTag(consoleURL, h.rec.doc.ID, h.rec.attr("http.method"), h.status, queries, dbMs, totalMs))
+		}
+	}
+	if header.Get("Content-Length") != "" || len(body) > 0 {
+		header.Set("Content-Length", strconv.Itoa(len(body)))
+	}
+	h.w.WriteHeader(h.status)
+	_, _ = h.w.Write(body)
+}
+
+// consoleURL is where the project's agent serves the console; for a page, the agent starts if it isn't running.
+func (h *heldResponse) consoleURL(page bool) string {
+	url := h.t.console.URL()
+	if url == "" && page && h.t.starter.ensure() {
+		// The first page of a fresh project: its agent is starting (once), so the page gets the badge too.
+		url = h.t.console.URL()
+	}
+	return url
+}
+
+// headers are what the badge reads: the trace's id, where it is in the console, and its timing so far.
+func (h *heldResponse) headers(header http.Header) {
+	id := h.rec.doc.ID
+	header.Set("Tracepanel-Id", id)
+	if url := h.consoleURL(false); url != "" {
+		header.Set("Tracepanel-Url", url+"#/t/"+id)
+	}
+	queries, dbMs, totalMs := h.rec.timing()
+	noun := "queries"
+	if queries == 1 {
+		noun = "query"
+	}
+	// The agent finds the issues: the badge asks the console for them once the trace is stored.
+	header.Add("Server-Timing", fmt.Sprintf(`db;dur=%.1f;desc="%d %s", app;dur=%.1f, total;dur=%.1f, tracepanel-issues;desc="pending"`,
+		dbMs, queries, noun, max(totalMs-dbMs, 0), totalMs))
+	// A single-page app on another origin reads them too.
+	header.Add("Access-Control-Expose-Headers", "Tracepanel-Id, Tracepanel-Url, Server-Timing")
+}
+
+// scriptTag is widget.min.js with the page's own request in data-tracepanel-* attributes.
+func scriptTag(consoleURL, id string, method any, status, queries int, dbMs, totalMs float64) string {
+	api := html.EscapeString(consoleURL)
+	return fmt.Sprintf(`<script src="%swidget.min.js" data-tracepanel-api="%s" data-tracepanel-id="%s" `+
+		`data-tracepanel-method="%s" data-tracepanel-status="%d" data-tracepanel-total="%.1f" data-tracepanel-db="%.1f" `+
+		`data-tracepanel-queries="%d" data-tracepanel-issues="pending" data-tracepanel-runtime="%s"></script>`,
+		api, api, id, html.EscapeString(fmt.Sprint(method)), status, totalMs, dbMs, queries, html.EscapeString(runtimeLabel()))
+}
+
+// runtimeLabel is what the panel shows next to its logo: "Go 1.27 · net/http".
+func runtimeLabel() string {
+	parts := strings.SplitN(goVersion(), ".", 3)
+	return "Go " + strings.Join(parts[:min(len(parts), 2)], ".") + " · net/http"
+}
+
+// inject puts the tag first in <head> (the badge wraps fetch before the page's scripts keep a reference to it).
+func inject(page []byte, tag string) []byte {
+	lower := bytes.ToLower(page)
+	if at := bytes.Index(lower, []byte("<head>")); at >= 0 {
+		at += len("<head>")
+		return append(append(append([]byte{}, page[:at]...), tag...), page[at:]...)
+	}
+	if at := bytes.LastIndex(lower, []byte("</body>")); at >= 0 {
+		return append(append(append([]byte{}, page[:at]...), tag...), page[at:]...)
+	}
+	return page
 }
