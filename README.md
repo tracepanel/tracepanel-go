@@ -90,7 +90,7 @@ The console runs `EXPLAIN` of a recorded `SELECT` on the database it came
 from. With a second database, name it:
 
 ```go
-replica, err := sql.Open(tracepanel.Driver("pgx", tracepanel.Alias("replica")), replicaDSN)
+replica, err := sql.Open(tracepanel.Driver("pgx", tracepanel.DBAlias("replica")), replicaDSN)
 ```
 
 ## Your own code, tasks and commands

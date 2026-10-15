@@ -309,7 +309,7 @@ func TestATaskIsATraceLinkedToTheRequestThatStartedIt(t *testing.T) {
 }
 
 func TestADriverIsRegisteredOnceUnderItsOwnName(t *testing.T) {
-	first, again, replica := Driver("fakedb"), Driver("fakedb"), Driver("fakedb", Alias("replica"))
+	first, again, replica := Driver("fakedb"), Driver("fakedb"), Driver("fakedb", DBAlias("replica"))
 	t.Setenv("TRACEPANEL_ENABLED", "0")
 	off := Driver("fakedb")
 

@@ -142,12 +142,12 @@ func (d *tracedDriver) OpenConnector(dsn string) (driver.Connector, error) {
 // DBOption tells Driver or WrapConnector more about the database.
 type DBOption func(*database)
 
-// Alias names the database among the app's ("default"): a second one, such as a replica, gets a name of its own.
-func Alias(name string) DBOption { return func(db *database) { db.alias = name } }
+// DBAlias names the database among the app's ("default"): a second one, such as a replica, gets a name of its own.
+func DBAlias(name string) DBOption { return func(db *database) { db.alias = name } }
 
-// System is the database's kind, as OpenTelemetry names it ("postgresql", "mysql", "sqlite"), when the driver's
+// DBSystem is the database's kind, as OpenTelemetry names it ("postgresql", "mysql", "sqlite"), when the driver's
 // name doesn't tell.
-func System(name string) DBOption {
+func DBSystem(name string) DBOption {
 	return func(db *database) {
 		if name != "" {
 			db.system = name
@@ -155,8 +155,8 @@ func System(name string) DBOption {
 	}
 }
 
-// Name is the database's name, shown with its queries (the alias otherwise).
-func Name(name string) DBOption { return func(db *database) { db.namespace = name } }
+// DBName is the database's name, shown with its queries (the alias otherwise).
+func DBName(name string) DBOption { return func(db *database) { db.namespace = name } }
 
 // systemOf is a database's kind from its driver's name or package.
 func systemOf(name string) string {
