@@ -11,7 +11,8 @@ the first time. Tags are `v0.3.0`, as Go modules name their versions.
   route (or `Config.Route`), its handler a `view` span, a panic with its
   stack and source, the badge's headers on every response and the badge
   on HTML pages. A stream or a WebSocket goes out as it is written.
-- `tracepanel.Open` and `OpenDB` in place of `sql.Open`: each statement
+- `sql.Open(tracepanel.Driver("pgx"), dsn)`, and `tracepanel.Connector`
+  for `sql.OpenDB`: each statement
   with its parameters, the rows it returned and the line that ran it, and
   each transaction, so the agent finds N+1 queries, duplicates and slow
   SQL. `EXPLAIN` of a recorded query from the agent's console, run by the
@@ -31,4 +32,5 @@ the first time. Tags are `v0.3.0`, as Go modules name their versions.
 ### Removed
 
 - OpenTelemetry: the SDK records on its own and has no dependencies.
-  `otelsql.Open` becomes `tracepanel.Open`.
+  `otelsql.Open("pgx", dsn)` becomes
+  `sql.Open(tracepanel.Driver("pgx"), dsn)`.

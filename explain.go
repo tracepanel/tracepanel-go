@@ -47,7 +47,7 @@ func explain(request explainRequest) (*explainAnswer, error) {
 	}
 	db := databaseNamed(alias)
 	if db == nil {
-		return nil, fmt.Errorf("the app has no database %s to run EXPLAIN on (open it with tracepanel.Open)", alias)
+		return nil, fmt.Errorf("the app has no database %s to run EXPLAIN on (open it with tracepanel.Driver)", alias)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), explainTimeout)
 	defer cancel()

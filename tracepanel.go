@@ -3,7 +3,7 @@
 // finds the issues (N+1 queries, duplicates, slow SQL), keeps the traces in .tracepanel/ and serves the console. The
 // middleware adds what the badge on a page reads (Server-Timing, Tracepanel-Id) and puts the badge into HTML pages.
 //
-//	db, err := tracepanel.Open("pgx", dsn) // in place of sql.Open
+//	db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
 //	http.ListenAndServe(addr, tracepanel.Wrap(mux))
 //
 // It has no dependencies, and records nothing until Wrap or Setup turns it on.

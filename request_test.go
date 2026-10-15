@@ -2,6 +2,7 @@ package tracepanel
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -80,7 +81,7 @@ func equalJSON(got, want any) bool {
 
 func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 	recorded := record(t)
-	db, err := Open("fakedb", "shop")
+	db, err := sql.Open(Driver("fakedb"), "shop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +249,7 @@ func TestAStreamGoesOutAsItIsWrittenWithTheTracesHeaders(t *testing.T) {
 
 func TestAStatementTheDriverDeclinesIsRecordedOnceAsItRan(t *testing.T) {
 	recorded := record(t)
-	db, _ := Open("fakedb", "shop")
+	db, _ := sql.Open(Driver("fakedb"), "shop")
 	fake.skipQueries = true
 
 	err := Command(context.Background(), "report", func(ctx context.Context) error {
@@ -267,7 +268,7 @@ func TestAStatementTheDriverDeclinesIsRecordedOnceAsItRan(t *testing.T) {
 
 func TestACommandsErrorFailsItsTrace(t *testing.T) {
 	recorded := record(t)
-	db, _ := Open("fakedb", "shop")
+	db, _ := sql.Open(Driver("fakedb"), "shop")
 
 	err := Command(context.Background(), "migrate", func(ctx context.Context) error {
 		_, err := db.ExecContext(ctx, "INSERT INTO missing VALUES (1)")
@@ -304,5 +305,15 @@ func TestATaskIsATraceLinkedToTheRequestThatStartedIt(t *testing.T) {
 	if !equalJSON(task.Links, []linkDoc{{Kind: "enqueued_by", TraceID: command.ID, SpanID: enqueued[0].ID}}) ||
 		task.Attrs["task.trigger"] != "request" || len(spans(task, "function")) != 1 {
 		t.Fatalf("task links %+v, attrs %v", task.Links, task.Attrs)
+	}
+}
+
+func TestADriverIsRegisteredOnceUnderItsOwnName(t *testing.T) {
+	first, again, replica := Driver("fakedb"), Driver("fakedb"), Driver("fakedb", Alias("replica"))
+	t.Setenv("TRACEPANEL_ENABLED", "0")
+	off := Driver("fakedb")
+
+	if first != "tracepanel:fakedb" || again != first || replica != "tracepanel:fakedb:replica" || off != "fakedb" {
+		t.Fatalf("%q, %q, %q, off %q", first, again, replica, off)
 	}
 }

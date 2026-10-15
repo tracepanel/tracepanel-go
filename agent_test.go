@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha512"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -48,7 +49,7 @@ func TestTheAgentGetsTheHelloTheTracesAndAnEXPLAINOnTheAppsDatabase(t *testing.T
 	fake.reset()
 	t.Setenv("TRACEPANEL_N_PLUS_ONE_THRESHOLD", "5")
 	t.Setenv("TRACEPANEL_AGENT", "")
-	if _, err := Open("fakedb", "shop", Alias("reports")); err != nil {
+	if _, err := sql.Open(Driver("fakedb", Alias("reports")), "shop"); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := os.MkdirTemp("", "tp")

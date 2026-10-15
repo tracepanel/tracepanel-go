@@ -16,13 +16,13 @@ dependencies.
 go get github.com/tracepanel/tracepanel-go
 ```
 
-Open the database with `tracepanel.Open` in place of `sql.Open`, and wrap
-the app's handler:
+Give `sql.Open` the driver's name through `tracepanel.Driver`, and wrap the
+app's handler:
 
 ```go
 import tracepanel "github.com/tracepanel/tracepanel-go"
 
-db, err := tracepanel.Open("pgx", dsn)
+db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
 // ...
 http.ListenAndServe(addr, tracepanel.Wrap(mux))
 ```
@@ -78,12 +78,19 @@ tracepanel.Wrap(router, tracepanel.Config{
 
 ### Databases
 
-`tracepanel.OpenDB` takes a driver's connector, as `sql.OpenDB` does. The
-console runs `EXPLAIN` of a recorded `SELECT` on the database it came from.
-With a second database, name it:
+`tracepanel.Driver` works wherever a driver's name goes: `sqlx.Open`, or
+GORM's `DriverName`. For a driver's connector, `tracepanel.Connector` wraps
+it for `sql.OpenDB`:
 
 ```go
-replica, err := tracepanel.Open("pgx", replicaDSN, tracepanel.Alias("replica"))
+db := sql.OpenDB(tracepanel.Connector(stdlib.GetConnector(*config)))
+```
+
+The console runs `EXPLAIN` of a recorded `SELECT` on the database it came
+from. With a second database, name it:
+
+```go
+replica, err := sql.Open(tracepanel.Driver("pgx", tracepanel.Alias("replica")), replicaDSN)
 ```
 
 ## Your own code, tasks and commands

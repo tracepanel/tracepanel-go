@@ -23,57 +23,123 @@ import (
 // each transaction a span around its statements. A statement is recorded when it runs with the context of a traced
 // request: db.QueryContext(ctx, ...), not db.Query(...).
 
-// Open is sql.Open with the database's statements recorded:
+// Driver is the name of the driver `name` with its statements recorded, for sql.Open (and sqlx.Open, GORM's
+// DriverName, anything that opens by a driver's name):
 //
-//	db, err := tracepanel.Open("pgx", dsn)
+//	db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
 //
-// With TRACEPANEL_ENABLED=0, it is sql.Open.
-func Open(driverName, dsn string, options ...DBOption) (*sql.DB, error) {
+// The first call registers it with database/sql, as "tracepanel:pgx". With TRACEPANEL_ENABLED=0, it is `name`.
+func Driver(name string, options ...DBOption) string {
 	if off(os.Getenv("TRACEPANEL_ENABLED")) {
-		return sql.Open(driverName, dsn)
+		return name
 	}
-	probe, err := sql.Open(driverName, dsn)
-	if err != nil {
-		return nil, err
+	db := newDatabase(options)
+	key := fmt.Sprintf("%s\x00%s\x00%s\x00%s", name, db.alias, db.system, db.namespace)
+	driversMu.Lock()
+	defer driversMu.Unlock()
+	if registered, ok := drivers[key]; ok {
+		return registered
 	}
-	registered := probe.Driver()
-	_ = probe.Close()
-	var connector driver.Connector = dsnConnector{dsn: dsn, driver: registered}
-	if opener, ok := registered.(driver.DriverContext); ok {
-		if connector, err = opener.OpenConnector(dsn); err != nil {
-			return nil, err
-		}
+	registered := "tracepanel:" + name
+	if db.alias != "default" {
+		registered += ":" + db.alias
 	}
-	system := systemOf(driverName)
-	if system == "" {
-		system = systemOf(driverPackage(registered))
+	for n := 2; taken(registered); n++ {
+		registered = fmt.Sprintf("tracepanel:%s:%s#%d", name, db.alias, n)
 	}
-	return OpenDB(connector, append([]DBOption{System(system)}, options...)...), nil
+	sql.Register(registered, &tracedDriver{name: name, db: db})
+	drivers[key] = registered
+	return registered
 }
 
-// OpenDB is sql.OpenDB with the database's statements recorded, for a driver's connector:
-//
-//	db := tracepanel.OpenDB(stdlib.GetConnector(*config))
-func OpenDB(connector driver.Connector, options ...DBOption) *sql.DB {
-	if off(os.Getenv("TRACEPANEL_ENABLED")) {
-		return sql.OpenDB(connector)
+var (
+	driversMu sync.Mutex
+	drivers   = map[string]string{}
+)
+
+func taken(name string) bool {
+	for _, known := range sql.Drivers() {
+		if known == name {
+			return true
+		}
 	}
-	db := &database{alias: "default", system: systemOf(driverPackage(connector.Driver()))}
+	return false
+}
+
+// Connector is a driver's connector with its statements recorded, for sql.OpenDB:
+//
+//	db := sql.OpenDB(tracepanel.Connector(stdlib.GetConnector(*config)))
+//
+// With TRACEPANEL_ENABLED=0, it is `connector`.
+func Connector(connector driver.Connector, options ...DBOption) driver.Connector {
+	if off(os.Getenv("TRACEPANEL_ENABLED")) {
+		return connector
+	}
+	return traced(connector, newDatabase(options))
+}
+
+// newDatabase is a database as its options tell it: its system comes from its driver when they don't.
+func newDatabase(options []DBOption) *database {
+	db := &database{alias: "default"}
 	for _, option := range options {
 		option(db)
-	}
-	if db.system == "" {
-		db.system = "other_sql"
 	}
 	if db.namespace == "" {
 		db.namespace = db.alias
 	}
-	db.sql = sql.OpenDB(&tracedConnector{inner: connector, db: db})
-	remember(db)
-	return db.sql
+	return db
 }
 
-// DBOption tells Open or OpenDB more about the database.
+// traced records the statements of `connector`'s connections, and keeps an untraced pool on it for EXPLAIN.
+func traced(connector driver.Connector, template *database) driver.Connector {
+	db := *template
+	if db.system == "" {
+		db.system = systemOf(driverPackage(connector.Driver()))
+	}
+	if db.system == "" {
+		db.system = "other_sql"
+	}
+	db.sql = sql.OpenDB(connector)
+	remember(&db)
+	return &tracedConnector{inner: connector, db: &db}
+}
+
+// tracedDriver is a registered driver's stand-in: it opens through that driver, and records its statements.
+type tracedDriver struct {
+	name string
+	db   *database
+}
+
+func (d *tracedDriver) Open(dsn string) (driver.Conn, error) {
+	connector, err := d.OpenConnector(dsn)
+	if err != nil {
+		return nil, err
+	}
+	return connector.Connect(context.Background())
+}
+
+func (d *tracedDriver) OpenConnector(dsn string) (driver.Connector, error) {
+	// database/sql hands out a registered driver only through a DB of it.
+	probe, err := sql.Open(d.name, dsn)
+	if err != nil {
+		return nil, err
+	}
+	inner := probe.Driver()
+	_ = probe.Close()
+	var connector driver.Connector = dsnConnector{dsn: dsn, driver: inner}
+	if opener, ok := inner.(driver.DriverContext); ok {
+		if connector, err = opener.OpenConnector(dsn); err != nil {
+			return nil, err
+		}
+	}
+	db := *d.db
+	if db.system == "" {
+		db.system = systemOf(d.name)
+	}
+	return traced(connector, &db), nil
+}
+
+// DBOption tells Driver or Connector more about the database.
 type DBOption func(*database)
 
 // Alias names the database among the app's ("default"): a second one, such as a replica, gets a name of its own.
