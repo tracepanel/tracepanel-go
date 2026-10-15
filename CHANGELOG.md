@@ -11,7 +11,7 @@ the first time. Tags are `v0.3.0`, as Go modules name their versions.
   route (or `Config.Route`), its handler a `view` span, a panic with its
   stack and source, the badge's headers on every response and the badge
   on HTML pages. A stream or a WebSocket goes out as it is written.
-- `sql.Open(tracepanel.Driver("pgx"), dsn)`, and `tracepanel.Connector`
+- `sql.Open(tracepanel.Driver("pgx"), dsn)`, and `tracepanel.WrapConnector`
   for `sql.OpenDB`: each statement
   with its parameters, the rows it returned and the line that ran it, and
   each transaction, so the agent finds N+1 queries, duplicates and slow

@@ -79,11 +79,11 @@ tracepanel.Wrap(router, tracepanel.Config{
 ### Databases
 
 `tracepanel.Driver` works wherever a driver's name goes: `sqlx.Open`, or
-GORM's `DriverName`. For a driver's connector, `tracepanel.Connector` wraps
-it for `sql.OpenDB`:
+GORM's `DriverName`. For a driver's connector, `tracepanel.WrapConnector`
+wraps it for `sql.OpenDB`:
 
 ```go
-db := sql.OpenDB(tracepanel.Connector(stdlib.GetConnector(*config)))
+db := sql.OpenDB(tracepanel.WrapConnector(stdlib.GetConnector(*config)))
 ```
 
 The console runs `EXPLAIN` of a recorded `SELECT` on the database it came

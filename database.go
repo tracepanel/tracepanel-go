@@ -66,12 +66,12 @@ func taken(name string) bool {
 	return false
 }
 
-// Connector is a driver's connector with its statements recorded, for sql.OpenDB:
+// WrapConnector is a driver's connector with its statements recorded, for sql.OpenDB:
 //
-//	db := sql.OpenDB(tracepanel.Connector(stdlib.GetConnector(*config)))
+//	db := sql.OpenDB(tracepanel.WrapConnector(stdlib.GetConnector(*config)))
 //
 // With TRACEPANEL_ENABLED=0, it is `connector`.
-func Connector(connector driver.Connector, options ...DBOption) driver.Connector {
+func WrapConnector(connector driver.Connector, options ...DBOption) driver.Connector {
 	if off(os.Getenv("TRACEPANEL_ENABLED")) {
 		return connector
 	}
@@ -139,7 +139,7 @@ func (d *tracedDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	return traced(connector, &db), nil
 }
 
-// DBOption tells Driver or Connector more about the database.
+// DBOption tells Driver or WrapConnector more about the database.
 type DBOption func(*database)
 
 // Alias names the database among the app's ("default"): a second one, such as a replica, gets a name of its own.
