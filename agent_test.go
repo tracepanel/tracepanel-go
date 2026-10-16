@@ -49,7 +49,7 @@ func TestTheAgentGetsTheHelloTheTracesAndAnEXPLAINOnTheAppsDatabase(t *testing.T
 	fake.reset()
 	t.Setenv("TRACEPANEL_N_PLUS_ONE_THRESHOLD", "5")
 	t.Setenv("TRACEPANEL_AGENT", "")
-	if _, err := sql.Open(Driver("fakedb", DBAlias("reports")), "shop"); err != nil {
+	if _, err := sql.Open(WrapDriver("fakedb", DBAlias("reports")), "shop"); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := os.MkdirTemp("", "tp")
@@ -67,7 +67,7 @@ func TestTheAgentGetsTheHelloTheTracesAndAnEXPLAINOnTheAppsDatabase(t *testing.T
 		t.Fatal(err)
 	}
 	s := newSender(&starter{storeDir: dir}, Config{Service: "shop", StoreDir: dir, MaxTraces: 500})
-	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY5", Kind: "http", Attrs: Attrs{}})
+	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY5", Kind: "http", Attrs: attrMap{}})
 
 	conn, err := listener.Accept()
 	if err != nil {
@@ -189,7 +189,7 @@ func TestEachPlatformHasItsPackageAndItsChecksum(t *testing.T) {
 }
 
 func TestW3CTraceContext(t *testing.T) {
-	rec := newRecording("http", "http", "GET /", Attrs{})
+	rec := newRecording("http", "http", "GET /", attrMap{})
 
 	header := outgoing(rec, "01M4ZYCP0KQZZPC6SD1RJ4PBY5")
 
@@ -200,7 +200,7 @@ func TestW3CTraceContext(t *testing.T) {
 	if !strings.Contains(header, rec.attr("w3c.trace_id").(string)) {
 		t.Fatalf("w3c.trace_id %v", rec.attr("w3c.trace_id"))
 	}
-	if got := incoming("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"); !equalJSON(got, Attrs{
+	if got := incoming("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"); !equalJSON(got, attrMap{
 		"w3c.trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "w3c.parent_span_id": "00f067aa0ba902b7",
 	}) {
 		t.Fatalf("incoming %v", got)

@@ -19,7 +19,7 @@ import (
 type recorder struct {
 	mu     sync.Mutex
 	traces []*traceDoc
-	t      *Tracepanel
+	t      *tracepanel
 }
 
 func record(t *testing.T) *recorder {
@@ -27,7 +27,7 @@ func record(t *testing.T) *recorder {
 	r := &recorder{}
 	module := "github.com/tracepanel/tracepanel-go/app"
 	appModule.Store(&module)
-	r.t = &Tracepanel{
+	r.t = &tracepanel{
 		config:  Config{Service: "shop", StoreDir: t.TempDir(), ConsoleURL: "http://127.0.0.1:9/"},
 		console: &console{configured: "http://127.0.0.1:9/"},
 		starter: &starter{storeDir: t.TempDir()},
@@ -81,7 +81,7 @@ func equalJSON(got, want any) bool {
 
 func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 	recorded := record(t)
-	db, err := sql.Open(Driver("fakedb"), "shop")
+	db, err := sql.Open(WrapDriver("fakedb"), "shop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,17 +105,17 @@ func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 		tx, _ := db.BeginTx(ctx, nil)
 		_, _ = tx.ExecContext(ctx, "UPDATE authors SET seen = now() WHERE id = $1", 7)
 		_ = tx.Commit()
-		slog.New(LogHandler(slog.NewTextHandler(io.Discard, nil))).InfoContext(ctx, "author shown", "books", 3,
+		slog.New(WrapLogHandler(slog.NewTextHandler(io.Discard, nil))).InfoContext(ctx, "author shown", "books", 3,
 			slog.Group("client", "api_key", "k-123", "region", "eu"))
 		request, _ := http.NewRequestWithContext(ctx, "GET", other.URL+"/rates", nil)
-		response, err := (&http.Client{Transport: Transport(http.DefaultTransport)}).Do(request)
+		response, err := (&http.Client{Transport: WrapTransport(http.DefaultTransport)}).Do(request)
 		if err == nil {
 			response.Body.Close()
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, "<html><head><title>Author</title></head><body>3 books</body></html>")
 	})
-	server := httptest.NewServer(recorded.t.Middleware(mux))
+	server := httptest.NewServer(recorded.t.middleware(mux))
 	defer server.Close()
 
 	response, err := http.Get(server.URL + "/authors/7")
@@ -147,7 +147,7 @@ func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 		t.Fatalf("sql spans: %+v", queries)
 	}
 	selectQuery := queries[0]
-	if !equalJSON(selectQuery.Attrs, Attrs{
+	if !equalJSON(selectQuery.Attrs, attrMap{
 		"db.system": "other_sql", "db.vendor": "other_sql", "db.client": "database/sql", "db.alias": "default",
 		"db.namespace": "default", "db.statement": "SELECT id, title FROM books WHERE author_id = $1",
 		"db.fingerprint": "SELECT id, title FROM books WHERE author_id = $1", "db.params": []any{7},
@@ -195,7 +195,7 @@ func TestAPanicFailsItsRequestWithItsStack(t *testing.T) {
 	recorded := record(t)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /boom", func(http.ResponseWriter, *http.Request) { panic("boom") })
-	server := httptest.NewServer(recorded.t.Middleware(mux))
+	server := httptest.NewServer(recorded.t.middleware(mux))
 	defer server.Close()
 
 	response, err := http.Get(server.URL + "/boom")
@@ -226,7 +226,7 @@ func TestAStreamGoesOutAsItIsWrittenWithTheTracesHeaders(t *testing.T) {
 		<-written
 		_, _ = io.WriteString(w, "data: two\n\n")
 	})
-	server := httptest.NewServer(recorded.t.Middleware(handler))
+	server := httptest.NewServer(recorded.t.middleware(handler))
 	defer server.Close()
 
 	response, err := http.Get(server.URL + "/events")
@@ -249,7 +249,7 @@ func TestAStreamGoesOutAsItIsWrittenWithTheTracesHeaders(t *testing.T) {
 
 func TestAStatementTheDriverDeclinesIsRecordedOnceAsItRan(t *testing.T) {
 	recorded := record(t)
-	db, _ := sql.Open(Driver("fakedb"), "shop")
+	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
 	fake.skipQueries = true
 
 	err := Command(context.Background(), "report", func(ctx context.Context) error {
@@ -268,7 +268,7 @@ func TestAStatementTheDriverDeclinesIsRecordedOnceAsItRan(t *testing.T) {
 
 func TestACommandsErrorFailsItsTrace(t *testing.T) {
 	recorded := record(t)
-	db, _ := sql.Open(Driver("fakedb"), "shop")
+	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
 
 	err := Command(context.Background(), "migrate", func(ctx context.Context) error {
 		_, err := db.ExecContext(ctx, "INSERT INTO missing VALUES (1)")
@@ -309,11 +309,22 @@ func TestATaskIsATraceLinkedToTheRequestThatStartedIt(t *testing.T) {
 }
 
 func TestADriverIsRegisteredOnceUnderItsOwnName(t *testing.T) {
-	first, again, replica := Driver("fakedb"), Driver("fakedb"), Driver("fakedb", DBAlias("replica"))
+	first, again, replica := WrapDriver("fakedb"), WrapDriver("fakedb"), WrapDriver("fakedb", DBAlias("replica"))
 	t.Setenv("TRACEPANEL_ENABLED", "0")
-	off := Driver("fakedb")
+	off := WrapDriver("fakedb")
 
 	if first != "tracepanel:fakedb" || again != first || replica != "tracepanel:fakedb:replica" || off != "fakedb" {
 		t.Fatalf("%q, %q, %q, off %q", first, again, replica, off)
+	}
+}
+
+func TestTheMiddlewareOfATracepanelThatIsOffIsTheHandler(t *testing.T) {
+	t.Setenv("TRACEPANEL_ENABLED", "0")
+	handler := http.NotFoundHandler()
+
+	wrapped := Middleware(handler)
+
+	if reflect.ValueOf(wrapped).Pointer() != reflect.ValueOf(handler).Pointer() {
+		t.Fatal("Middleware wrapped a handler with Tracepanel off")
 	}
 }

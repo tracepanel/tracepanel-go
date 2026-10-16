@@ -7,19 +7,20 @@ the first time. Tags are `v0.3.0`, as Go modules name their versions.
 
 ### Added
 
-- `tracepanel.Wrap(mux)`: each request a trace, named by its `ServeMux`
-  route (or `Config.Route`), its handler a `view` span, a panic with its
-  stack and source, the badge's headers on every response and the badge
-  on HTML pages. A stream or a WebSocket goes out as it is written.
-- `sql.Open(tracepanel.Driver("pgx"), dsn)`, and `tracepanel.WrapConnector`
-  for `sql.OpenDB`: each statement
-  with its parameters, the rows it returned and the line that ran it, and
-  each transaction, so the agent finds N+1 queries, duplicates and slow
+- `tracepanel.WrapHandler(mux)`, or `tracepanel.Middleware` for another
+  router: each request a trace, named by its `ServeMux` route (or
+  `Config.Route`), its handler a `view` span, a panic with its stack and
+  source, the badge's headers on every response and the badge on HTML
+  pages. A stream or a WebSocket goes out as it is written.
+- `sql.Open(tracepanel.WrapDriver("pgx"), dsn)`, and
+  `tracepanel.WrapConnector` for `sql.OpenDB`: each statement with its
+  parameters, the rows it returned and the line that ran it, and each
+  transaction, so the agent finds N+1 queries, duplicates and slow
   SQL. `EXPLAIN` of a recorded query from the agent's console, run by the
   app on its database and rolled back.
 - `slog` records logged with a request's context, with the line that
   logged them, and calls through `http.DefaultClient` or
-  `tracepanel.Transport` with a `traceparent`.
+  `tracepanel.WrapTransport` with a `traceparent`.
 - `tracepanel.Span` for the app's own code, `tracepanel.Go` for a task
   linked to the request that started it, and `tracepanel.Command` for a
   job or a command.
@@ -33,4 +34,4 @@ the first time. Tags are `v0.3.0`, as Go modules name their versions.
 
 - OpenTelemetry: the SDK records on its own and has no dependencies.
   `otelsql.Open("pgx", dsn)` becomes
-  `sql.Open(tracepanel.Driver("pgx"), dsn)`.
+  `sql.Open(tracepanel.WrapDriver("pgx"), dsn)`.

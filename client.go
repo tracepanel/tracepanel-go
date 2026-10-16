@@ -9,14 +9,14 @@ import (
 // Outgoing HTTP calls: each is an `http.client` span of the trace in its request's context, and carries a
 // traceparent, so the app it reaches (with Tracepanel of its own) links its trace to the call.
 
-// Transport records the calls made through `base` (http.DefaultTransport when nil):
+// WrapTransport records the calls made through `base` (http.DefaultTransport when nil):
 //
-//	client := &http.Client{Transport: tracepanel.Transport(nil)}
+//	client := &http.Client{WrapTransport: tracepanel.WrapTransport(nil)}
 //
 // Setup gives it to http.DefaultClient, so its calls are recorded already. http.DefaultTransport stays as it is:
-// code asserts it is an *http.Transport. A call is recorded when its request has the context of a traced request:
+// code asserts it is an *http.WrapTransport. A call is recorded when its request has the context of a traced request:
 // use http.NewRequestWithContext(ctx, ...).
-func Transport(base http.RoundTripper) http.RoundTripper {
+func WrapTransport(base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
 	}
@@ -32,7 +32,7 @@ type transport struct {
 
 func installTransport() {
 	if http.DefaultClient.Transport == nil {
-		http.DefaultClient.Transport = Transport(nil)
+		http.DefaultClient.Transport = WrapTransport(nil)
 	}
 }
 
@@ -51,7 +51,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	url := req.URL
 	scheme := url.Scheme
 	port := url.Port()
-	attrs := Attrs{
+	attrs := attrMap{
 		"http.request.method": req.Method,
 		"url.full":            url.Redacted(),
 		"url.scheme":          scheme,

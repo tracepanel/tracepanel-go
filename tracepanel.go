@@ -3,10 +3,10 @@
 // finds the issues (N+1 queries, duplicates, slow SQL), keeps the traces in .tracepanel/ and serves the console. The
 // middleware adds what the badge on a page reads (Server-Timing, Tracepanel-Id) and puts the badge into HTML pages.
 //
-//	db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
-//	http.ListenAndServe(addr, tracepanel.Wrap(mux))
+//	db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
+//	http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 //
-// It has no dependencies, and records nothing until Wrap or Setup turns it on.
+// It has no dependencies, and records nothing until WrapHandler or Setup turns it on.
 package tracepanel
 
 import (
@@ -40,8 +40,8 @@ type Config struct {
 	Route func(*http.Request) string
 }
 
-// Tracepanel records an app's traces and sends them to its agent.
-type Tracepanel struct {
+// tracepanel records an app's traces and sends them to its agent.
+type tracepanel struct {
 	config  Config
 	starter *starter
 	console *console
@@ -51,14 +51,19 @@ type Tracepanel struct {
 }
 
 var (
-	active    atomic.Pointer[Tracepanel]
+	active    atomic.Pointer[tracepanel]
 	setupOnce sync.Mutex
 )
 
 // Setup turns Tracepanel on for the process, once: the standard slog logger's records and the default HTTP
-// client's calls join the traces. Wrap calls it. A program without an HTTP server (a worker, a command) calls it
-// itself, and Flush before it exits. TRACEPANEL_ENABLED=0 leaves Tracepanel off: it returns nil.
-func Setup(config ...Config) *Tracepanel {
+// client's calls join the traces. WrapHandler and Middleware call it. A program without an HTTP server (a worker, a
+// command) calls it itself, and Flush before it exits. TRACEPANEL_ENABLED=0 leaves Tracepanel off.
+func Setup(config ...Config) {
+	setup(config...)
+}
+
+// setup is Setup, with the Tracepanel it turned on: nil when it is off.
+func setup(config ...Config) *tracepanel {
 	setupOnce.Lock()
 	defer setupOnce.Unlock()
 	if t := active.Load(); t != nil {
@@ -86,9 +91,9 @@ func off(value string) bool {
 	return false
 }
 
-func newTracepanel(config Config) *Tracepanel {
+func newTracepanel(config Config) *tracepanel {
 	start := &starter{storeDir: config.StoreDir}
-	t := &Tracepanel{
+	t := &tracepanel{
 		config:  config,
 		starter: start,
 		console: &console{configured: config.ConsoleURL, storeDir: config.StoreDir},
@@ -156,7 +161,7 @@ func Flush(timeout time.Duration) {
 var roles = map[string]string{"http": "web", "task": "worker"}
 
 // begin starts a trace of the process, with what every trace says about the app that recorded it.
-func (t *Tracepanel) begin(kind, rootKind, name string, attrs Attrs) *recording {
+func (t *tracepanel) begin(kind, rootKind, name string, attrs attrMap) *recording {
 	role, _ := attrs["service.role"].(string)
 	if role == "" {
 		role = roles[kind]
@@ -174,7 +179,7 @@ func (t *Tracepanel) begin(kind, rootKind, name string, attrs Attrs) *recording 
 }
 
 // finish sends an ended trace to the agent.
-func (t *Tracepanel) finish(rec *recording) {
+func (t *tracepanel) finish(rec *recording) {
 	t.deliver(rec.finish())
 }
 
@@ -190,7 +195,7 @@ func Span(ctx context.Context, name string) (context.Context, func()) {
 	if s == nil {
 		return ctx, func() {}
 	}
-	span := s.rec.begin(s.span, "function", name, Attrs{"code.origin": nilIfEmpty(origin())})
+	span := s.rec.begin(s.span, "function", name, attrMap{"code.origin": nilIfEmpty(origin())})
 	return within(ctx, s.rec, span.ID), func() { s.rec.end(span, false) }
 }
 
@@ -201,7 +206,7 @@ func Command(ctx context.Context, name string, fn func(context.Context) error) e
 	if t == nil {
 		return fn(ctx)
 	}
-	rec := t.begin("command", "command", name, Attrs{"command.trigger": "other"})
+	rec := t.begin("command", "command", name, attrMap{"command.trigger": "other"})
 	return t.run(ctx, rec, fn)
 }
 
@@ -215,11 +220,11 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 		go func() { _ = fn(detached) }()
 		return
 	}
-	attrs := Attrs{"task.system": "go", "task.name": name, "task.trigger": "other"}
+	attrs := attrMap{"task.system": "go", "task.name": name, "task.trigger": "other"}
 	var started *linkDoc
 	if s := scopeOf(ctx); s != nil {
 		span := s.rec.done(s.span, newID(), "task.enqueue", name,
-			Attrs{"task.system": "go", "task.name": name, "code.origin": nilIfEmpty(origin())}, time.Now(), false)
+			attrMap{"task.system": "go", "task.name": name, "code.origin": nilIfEmpty(origin())}, time.Now(), false)
 		started = &linkDoc{Kind: "enqueued_by", TraceID: s.rec.doc.ID, SpanID: span.ID}
 		attrs["task.trigger"] = "request"
 		if role, ok := s.rec.attr("service.role").(string); ok {
@@ -236,7 +241,7 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 }
 
 // run runs fn in its trace, and ends the trace: an error or a panic fails it.
-func (t *Tracepanel) run(ctx context.Context, rec *recording, fn func(context.Context) error) (err error) {
+func (t *tracepanel) run(ctx context.Context, rec *recording, fn func(context.Context) error) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			recordPanic(rec, recovered, callers(1))
@@ -274,5 +279,5 @@ func installLogs() {
 		// would deadlock. The app hasn't chosen one, so the same text on stderr.
 		next = slog.NewTextHandler(os.Stderr, nil)
 	}
-	slog.SetDefault(slog.New(LogHandler(next)))
+	slog.SetDefault(slog.New(WrapLogHandler(next)))
 }

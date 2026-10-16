@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-// LogHandler adds slog records to the trace of the context they were logged with (slog.InfoContext(ctx, ...)),
+// WrapLogHandler adds slog records to the trace of the context they were logged with (slog.InfoContext(ctx, ...)),
 // then passes them on to `next`. Setup puts it in front of the standard logger's handler; a logger of the app's own
 // takes it as its handler:
 //
-//	logger := slog.New(tracepanel.LogHandler(slog.NewJSONHandler(os.Stdout, nil)))
+//	logger := slog.New(tracepanel.WrapLogHandler(slog.NewJSONHandler(os.Stdout, nil)))
 //
 // A record keeps its level, its message, the line that logged it, and each attribute as an extra. field.
-func LogHandler(next slog.Handler) slog.Handler {
+func WrapLogHandler(next slog.Handler) slog.Handler {
 	if _, ok := next.(*logHandler); ok {
 		return next
 	}
@@ -35,7 +35,7 @@ func (h *logHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 func (h *logHandler) Handle(ctx context.Context, record slog.Record) error {
 	if s := scopeOf(ctx); s != nil {
-		attrs := Attrs{}
+		attrs := attrMap{}
 		prefix := "extra."
 		if len(h.groups) > 0 {
 			prefix += strings.Join(h.groups, ".") + "."
@@ -71,7 +71,7 @@ var secret = regexp.MustCompile(`(?i)pass(word|wd)?|secret|token|api_?key|auth|c
 const mask = "********"
 
 // flatten names a group's attributes by their path: extra.user.id. A secret-looking one keeps the mask.
-func flatten(attrs Attrs, prefix string, attr slog.Attr) {
+func flatten(attrs attrMap, prefix string, attr slog.Attr) {
 	value := attr.Value.Resolve()
 	if value.Kind() == slog.KindGroup {
 		for _, member := range value.Group() {

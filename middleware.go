@@ -14,27 +14,36 @@ import (
 	"strings"
 )
 
-// Wrap is Tracepanel in one line, around the app's handler (its ServeMux):
+// WrapHandler is Tracepanel in one line, around the app's handler (its ServeMux):
 //
-//	http.ListenAndServe(addr, tracepanel.Wrap(mux))
+//	http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 //
 // It turns Tracepanel on (Setup), and traces every request: its handler on a ServeMux is a `view` span named after
 // its function, and the response gets what the badge reads. With TRACEPANEL_ENABLED=0, it returns the handler as it
 // is.
-func Wrap(handler http.Handler, config ...Config) http.Handler {
-	t := Setup(config...)
+func WrapHandler(handler http.Handler, config ...Config) http.Handler {
+	t := setup(config...)
 	if t == nil {
 		return handler
 	}
-	return t.Middleware(handler)
+	return t.middleware(handler)
 }
 
-// Middleware traces every request, and gives each response what the badge reads: the trace's id and timing in
+// Middleware is WrapHandler as a router's middleware, for chi's r.Use, gorilla's or echo's WrapMiddleware:
+//
+//	r.Use(tracepanel.Middleware)
+//
+// Setup, called before it, gives it a Config. With TRACEPANEL_ENABLED=0, it returns the handler as it is.
+func Middleware(next http.Handler) http.Handler {
+	return WrapHandler(next)
+}
+
+// middleware traces every request, and gives each response what the badge reads: the trace's id and timing in
 // headers, and the badge's script in an HTML page. The response is held until the handler returns; one the handler
 // flushes (a stream) or takes over (a WebSocket) goes out as it is written, with the headers and without the badge.
-func (t *Tracepanel) Middleware(next http.Handler) http.Handler {
+func (t *tracepanel) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attrs := Attrs{"http.method": r.Method, "http.path": r.URL.Path, "tracepanel.framework": "net/http"}
+		attrs := attrMap{"http.method": r.Method, "http.path": r.URL.Path, "tracepanel.framework": "net/http"}
 		for key, value := range incoming(r.Header.Get(traceparentHeader)) {
 			attrs[key] = value
 		}
@@ -67,7 +76,7 @@ func (t *Tracepanel) Middleware(next http.Handler) http.Handler {
 
 // route is the request's route: the app's Route, else the pattern ServeMux matched ("GET /books/{id}" names
 // /books/{id}), else the path.
-func (t *Tracepanel) route(r *http.Request) string {
+func (t *tracepanel) route(r *http.Request) string {
 	if t.config.Route != nil {
 		if route := t.config.Route(r); route != "" {
 			return route
@@ -84,7 +93,7 @@ func (t *Tracepanel) route(r *http.Request) string {
 
 // serve runs the request through the app's handler; on a ServeMux, the handler it routes to is a `view` span named
 // after its function.
-func (t *Tracepanel) serve(w http.ResponseWriter, r *http.Request, next http.Handler) {
+func (t *tracepanel) serve(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	mux, ok := next.(*http.ServeMux)
 	if !ok {
 		next.ServeHTTP(w, r)
@@ -98,7 +107,7 @@ func (t *Tracepanel) serve(w http.ResponseWriter, r *http.Request, next http.Han
 		next.ServeHTTP(w, r)
 		return
 	}
-	span := s.rec.begin(s.span, "view", shortFunction(name), Attrs{"code.function": name})
+	span := s.rec.begin(s.span, "view", shortFunction(name), attrMap{"code.function": name})
 	s.rec.setView(span.ID)
 	s.rec.set("code.view", name)
 	failed := true
@@ -127,7 +136,7 @@ type heldResponse struct {
 	body    bytes.Buffer
 	status  int
 	wrote   bool
-	t       *Tracepanel
+	t       *tracepanel
 	rec     *recording
 	passing bool // flushed or hijacked: written through as it comes
 }

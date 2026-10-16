@@ -16,15 +16,15 @@ dependencies.
 go get github.com/tracepanel/tracepanel-go
 ```
 
-Give `sql.Open` the driver's name through `tracepanel.Driver`, and wrap the
-app's handler:
+Give `sql.Open` the driver's name through `tracepanel.WrapDriver`, and wrap
+the app's handler:
 
 ```go
 import tracepanel "github.com/tracepanel/tracepanel-go"
 
-db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
+db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
 // ...
-http.ListenAndServe(addr, tracepanel.Wrap(mux))
+http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 ```
 
 Run the app as you do (`go run .`). The first request starts the agent for
@@ -52,7 +52,7 @@ Go 1.26 or later.
 - `slog` records logged with the request's context
   (`slog.InfoContext(ctx, ...)`), with the line that logged them.
 - Calls to HTTP APIs through `http.DefaultClient` (`http.Get` too) or a
-  client with `tracepanel.Transport(base)`, each with a `traceparent`, so
+  client with `tracepanel.WrapTransport(base)`, each with a `traceparent`, so
   the app it reaches links its trace to the call.
 - Panics, with your frames and the source around them. The request
   answers 500.
@@ -68,17 +68,21 @@ without it isn't recorded.
 
 ### Other routers
 
-`ServeMux` names each route. For another router, `Config.Route` returns it:
+`ServeMux` names each route. Another router takes `tracepanel.Middleware`,
+and `Config.Route` returns the route, as here for chi:
 
 ```go
-tracepanel.Wrap(router, tracepanel.Config{
-	Route: func(r *http.Request) string { return chi.RouteContext(r.Context()).RoutePattern() },
+tracepanel.Setup(tracepanel.Config{
+	Route: func(r *http.Request) string {
+		return chi.RouteContext(r.Context()).RoutePattern()
+	},
 })
+router.Use(tracepanel.Middleware)
 ```
 
 ### Databases
 
-`tracepanel.Driver` works wherever a driver's name goes: `sqlx.Open`, or
+`tracepanel.WrapDriver` works wherever a driver's name goes: `sqlx.Open`, or
 GORM's `DriverName`. For a driver's connector, `tracepanel.WrapConnector`
 wraps it for `sql.OpenDB`:
 
@@ -90,7 +94,8 @@ The console runs `EXPLAIN` of a recorded `SELECT` on the database it came
 from. With a second database, name it:
 
 ```go
-replica, err := sql.Open(tracepanel.Driver("pgx", tracepanel.DBAlias("replica")), replicaDSN)
+replicaDriver := tracepanel.WrapDriver("pgx", tracepanel.DBAlias("replica"))
+replica, err := sql.Open(replicaDriver, replicaDSN)
 ```
 
 ## Your own code, tasks and commands
@@ -115,8 +120,8 @@ exits, so its traces reach the agent.
 
 ## Settings
 
-`tracepanel.Wrap(mux, tracepanel.Config{...})` and `tracepanel.Setup(...)`
-take a `Config`. What it leaves empty comes from the environment:
+`tracepanel.WrapHandler(mux, tracepanel.Config{...})` and
+`tracepanel.Setup(...)` take a `Config`. What it leaves empty comes from the environment:
 
 | Field | Variable | Default |
 | --- | --- | --- |

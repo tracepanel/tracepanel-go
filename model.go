@@ -9,8 +9,8 @@ import (
 
 // The trace as every Tracepanel SDK sends it to the agent.
 
-// Attrs are a trace's or a span's attributes, named as OpenTelemetry names them where it has a name.
-type Attrs map[string]any
+// attrMap are a trace's or a span's attributes, named as OpenTelemetry names them where it has a name.
+type attrMap map[string]any
 
 type traceDoc struct {
 	ID       string     `json:"id"`
@@ -19,7 +19,7 @@ type traceDoc struct {
 	Start    int64      `json:"start"`
 	Duration int64      `json:"duration"`
 	Status   string     `json:"status"`
-	Attrs    Attrs      `json:"attrs"`
+	Attrs    attrMap    `json:"attrs"`
 	Spans    []spanDoc  `json:"spans"`
 	Logs     []logDoc   `json:"logs"`
 	Errors   []errorDoc `json:"errors"`
@@ -35,7 +35,7 @@ type spanDoc struct {
 	Start    int64   `json:"start"`
 	Duration int64   `json:"duration"`
 	Status   string  `json:"status"`
-	Attrs    Attrs   `json:"attrs"`
+	Attrs    attrMap `json:"attrs"`
 	// Still running: when its trace ends first, it lasts until then.
 	open bool
 }
@@ -47,7 +47,7 @@ type logDoc struct {
 	Logger    string  `json:"logger"`
 	Message   string  `json:"message"`
 	Exception *string `json:"exception"`
-	Attrs     Attrs   `json:"attrs"`
+	Attrs     attrMap `json:"attrs"`
 }
 
 type errorDoc struct {

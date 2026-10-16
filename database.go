@@ -23,13 +23,13 @@ import (
 // each transaction a span around its statements. A statement is recorded when it runs with the context of a traced
 // request: db.QueryContext(ctx, ...), not db.Query(...).
 
-// Driver is the name of the driver `name` with its statements recorded, for sql.Open (and sqlx.Open, GORM's
+// WrapDriver is the name of the driver `name` with its statements recorded, for sql.Open (and sqlx.Open, GORM's
 // DriverName, anything that opens by a driver's name):
 //
-//	db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
+//	db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
 //
 // The first call registers it with database/sql, as "tracepanel:pgx". With TRACEPANEL_ENABLED=0, it is `name`.
-func Driver(name string, options ...DBOption) string {
+func WrapDriver(name string, options ...DBOption) string {
 	if off(os.Getenv("TRACEPANEL_ENABLED")) {
 		return name
 	}
@@ -190,8 +190,8 @@ type database struct {
 	sql                      *sql.DB
 }
 
-func (db *database) attrs() Attrs {
-	return Attrs{
+func (db *database) attrs() attrMap {
+	return attrMap{
 		"db.system": db.system, "db.vendor": db.system, "db.client": "database/sql", "db.alias": db.alias,
 		"db.namespace": db.namespace,
 	}
@@ -491,7 +491,7 @@ type statement struct {
 	rec    *recording
 	parent string
 	name   string
-	attrs  Attrs
+	attrs  attrMap
 	start  time.Time
 }
 

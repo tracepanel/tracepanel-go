@@ -16,12 +16,12 @@ const traceparentHeader = "traceparent"
 var traceparent = regexp.MustCompile(`^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})`)
 
 // incoming is a received traceparent as its trace's attributes, the W3C trace and the caller's span; none if invalid.
-func incoming(header string) Attrs {
+func incoming(header string) attrMap {
 	match := traceparent.FindStringSubmatch(strings.ToLower(strings.TrimSpace(header)))
 	if match == nil || match[1] == "ff" || match[2] == strings.Repeat("0", 32) || match[3] == strings.Repeat("0", 16) {
 		return nil
 	}
-	return Attrs{"w3c.trace_id": match[2], "w3c.parent_span_id": match[3]}
+	return attrMap{"w3c.trace_id": match[2], "w3c.parent_span_id": match[3]}
 }
 
 // outgoing is the traceparent a call made in `rec` carries, whose span is `spanID`.

@@ -41,24 +41,24 @@ type recording struct {
 	view string
 }
 
-func newRecording(kind, rootKind, name string, attrs Attrs) *recording {
+func newRecording(kind, rootKind, name string, attrs attrMap) *recording {
 	now := micros(time.Now())
 	rec := &recording{doc: traceDoc{
 		ID: newID(), Kind: kind, Name: name, Start: now, Status: "ok", Attrs: attrs,
 		Logs: []logDoc{}, Errors: []errorDoc{}, Links: []linkDoc{}, Issues: []any{},
 	}}
-	rec.root = &spanDoc{ID: newID(), Kind: rootKind, Name: name, Start: now, Status: "ok", Attrs: Attrs{}, open: true}
+	rec.root = &spanDoc{ID: newID(), Kind: rootKind, Name: name, Start: now, Status: "ok", Attrs: attrMap{}, open: true}
 	rec.spans = []*spanDoc{rec.root}
 	return rec
 }
 
 // begin opens a span under `parent` (the root when empty), until end.
-func (r *recording) begin(parent, kind, name string, attrs Attrs) *spanDoc {
+func (r *recording) begin(parent, kind, name string, attrs attrMap) *spanDoc {
 	return r.add(parent, newID(), kind, name, attrs, micros(time.Now()), true)
 }
 
 // add records a span with its id and start given, open until end or done already.
-func (r *recording) add(parent, id, kind, name string, attrs Attrs, start int64, open bool) *spanDoc {
+func (r *recording) add(parent, id, kind, name string, attrs attrMap, start int64, open bool) *spanDoc {
 	if parent == "" {
 		parent = r.root.ID
 	}
@@ -78,7 +78,7 @@ func (r *recording) add(parent, id, kind, name string, attrs Attrs, start int64,
 }
 
 // done records a span that already happened, from `start` until now.
-func (r *recording) done(parent, id, kind, name string, attrs Attrs, start time.Time, failed bool) *spanDoc {
+func (r *recording) done(parent, id, kind, name string, attrs attrMap, start time.Time, failed bool) *spanDoc {
 	span := r.add(parent, id, kind, name, attrs, micros(start), true)
 	r.end(span, failed)
 	return span
