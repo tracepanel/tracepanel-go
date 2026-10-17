@@ -381,3 +381,42 @@ func TestTheContextOfATransactionOutsideATraceIsTheContext(t *testing.T) {
 		t.Fatal("a new context outside a trace")
 	}
 }
+
+func TestTheSignedInUserIsNamedOnTheTrace(t *testing.T) {
+	recorded := record(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /me", func(w http.ResponseWriter, r *http.Request) {
+		SetUser(r.Context(), "42", "ada")
+	})
+	server := httptest.NewServer(recorded.t.middleware(mux))
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	doc := recorded.wait(t, 1)[0]
+
+	if doc.Attrs["user.id"] != "42" || doc.Attrs["user.username"] != "ada" {
+		t.Fatalf("attrs %v", doc.Attrs)
+	}
+}
+
+func TestAUserWithoutANameIsTheirID(t *testing.T) {
+	recorded := record(t)
+
+	_ = Command(context.Background(), "export", func(ctx context.Context) error {
+		SetUser(ctx, "7", "")
+		return nil
+	})
+	SetUser(context.Background(), "8", "outside")
+	doc := recorded.wait(t, 1)[0]
+
+	if doc.Attrs["user.id"] != "7" || doc.Attrs["user.username"] != nil {
+		t.Fatalf("attrs %v", doc.Attrs)
+	}
+	if _, named := doc.Attrs["user.username"]; named {
+		t.Fatalf("a username in %v", doc.Attrs)
+	}
+}

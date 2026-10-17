@@ -199,6 +199,22 @@ func Span(ctx context.Context, name string) (context.Context, func()) {
 	return within(ctx, s.rec, span.ID), func() { s.rec.end(span, false) }
 }
 
+// SetUser names the signed-in user on the trace in ctx, as the app's authentication knows them: their id
+// (user.id) and their username (user.username, left out when empty). The username stays on this machine: the agent
+// drops it from what leaves it.
+//
+//	tracepanel.SetUser(r.Context(), strconv.FormatInt(user.ID, 10), user.Email)
+func SetUser(ctx context.Context, id, username string) {
+	s := scopeOf(ctx)
+	if s == nil {
+		return
+	}
+	s.rec.set("user.id", id)
+	if username != "" {
+		s.rec.set("user.username", username)
+	}
+}
+
 // Command records fn as a trace of its own: a scheduled job, a CLI command, a migration. An error it returns, or a
 // panic, fails the trace (the panic goes on).
 func Command(ctx context.Context, name string, fn func(context.Context) error) error {

@@ -8,6 +8,9 @@
   transaction is open (an HTTP call, a log record, a span) goes under the
   transaction's span, so the agent finds an HTTP call inside a
   transaction. Once the transaction ends, it goes under the request again.
+- `tracepanel.SetUser(ctx, id, username)` names the signed-in user on the
+  trace as `user.id` and `user.username`, as the Python SDK does. The
+  username stays on this machine.
 
 ## 0.3.0 (2026-10-15)
 

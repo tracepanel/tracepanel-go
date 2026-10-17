@@ -119,6 +119,9 @@ tracepanel.Go(ctx, "send welcome email", func(ctx context.Context) error {
 	return mailer.Send(ctx, user)
 })
 
+// The signed-in user, by id and username, from your authentication.
+tracepanel.SetUser(ctx, strconv.FormatInt(user.ID, 10), user.Email)
+
 // A command or a scheduled job: a trace of its own.
 err := tracepanel.Command(ctx, "nightly report", report)
 ```
