@@ -58,7 +58,7 @@ func (h *logHandler) Handle(ctx context.Context, record slog.Record) error {
 			}
 		}
 		s.rec.log(logDoc{
-			SpanID: ptr(s.span), Time: micros(record.Time), Level: levelName(record.Level), Logger: logger,
+			SpanID: ptr(s.parent()), Time: micros(record.Time), Level: levelName(record.Level), Logger: logger,
 			Message: record.Message, Attrs: attrs,
 		})
 	}

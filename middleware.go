@@ -107,7 +107,7 @@ func (t *tracepanel) serve(w http.ResponseWriter, r *http.Request, next http.Han
 		next.ServeHTTP(w, r)
 		return
 	}
-	span := s.rec.begin(s.span, "view", shortFunction(name), attrMap{"code.function": name})
+	span := s.rec.begin(s.parent(), "view", shortFunction(name), attrMap{"code.function": name})
 	s.rec.setView(span.ID)
 	s.rec.set("code.view", name)
 	failed := true

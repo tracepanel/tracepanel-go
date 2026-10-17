@@ -270,6 +270,15 @@ func (c *tracedConn) Prepare(query string) (driver.Stmt, error) {
 }
 
 func (c *tracedConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	if probe, ok := ctx.Value(txProbe{}).(*openTx); ok {
+		// TxContext asks which transaction is open on this connection: nothing is prepared.
+		c.mu.Lock()
+		if c.txn != nil {
+			*probe = *c.txn
+		}
+		c.mu.Unlock()
+		return nil, errTxProbe
+	}
 	var inner driver.Stmt
 	var err error
 	if preparer, ok := c.inner.(driver.ConnPrepareContext); ok {
@@ -307,7 +316,7 @@ func (c *tracedConn) BeginTx(ctx context.Context, options driver.TxOptions) (dri
 	if s := scopeOf(ctx); s != nil {
 		attrs := c.db.attrs()
 		attrs["code.origin"] = nilIfEmpty(origin())
-		span := s.rec.begin(s.span, "transaction", "transaction "+c.db.namespace, attrs)
+		span := s.rec.begin(s.parent(), "transaction", "transaction "+c.db.namespace, attrs)
 		c.mu.Lock()
 		c.txn = &openTx{rec: s.rec, span: span}
 		c.mu.Unlock()
@@ -334,7 +343,7 @@ func (c *tracedConn) parent(s *scope) string {
 	if c.txn != nil && c.txn.rec == s.rec {
 		return c.txn.span.ID
 	}
-	return s.span
+	return s.parent()
 }
 
 func (c *tracedConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
@@ -461,6 +470,33 @@ func values(args []driver.NamedValue) []driver.Value {
 }
 
 // ---------- a transaction ----------
+
+// TxContext is ctx for the work of the transaction `tx`, begun with ctx: what runs with it while `tx` is open (an
+// outgoing HTTP call, a log record, a span, a query) goes under the transaction's span, and after the commit or the
+// rollback under ctx's span again. database/sql keeps the context a transaction began with to itself, so the app
+// asks for this one:
+//
+//	tx, err := db.BeginTx(ctx, nil)
+//	ctx = tracepanel.TxContext(ctx, tx)
+//
+// Outside a trace, or for a transaction that isn't recorded, it is ctx.
+func TxContext(ctx context.Context, tx *sql.Tx) context.Context {
+	s := scopeOf(ctx)
+	if s == nil || tx == nil {
+		return ctx
+	}
+	// The transaction's connection answers a prepare carrying the probe with its open transaction.
+	found := &openTx{}
+	_, _ = tx.PrepareContext(context.WithValue(ctx, txProbe{}, found), "")
+	if found.span == nil || found.rec != s.rec {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKey{}, &scope{rec: s.rec, span: s.parent(), txn: found})
+}
+
+type txProbe struct{}
+
+var errTxProbe = errors.New("tracepanel: a probe for the open transaction")
 
 type tracedTx struct {
 	inner driver.Tx

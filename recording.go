@@ -15,6 +15,16 @@ type contextKey struct{}
 type scope struct {
 	rec  *recording
 	span string
+	// The transaction TxContext gave the context: new work goes under it while it is open, then under span again.
+	txn *openTx
+}
+
+// parent is the span new work of the context goes under.
+func (s *scope) parent() string {
+	if s.txn != nil && s.rec.isOpen(s.txn.span) {
+		return s.txn.span.ID
+	}
+	return s.span
 }
 
 func scopeOf(ctx context.Context) *scope {
@@ -99,6 +109,13 @@ func (r *recording) end(span *spanDoc, failed bool) {
 		r.queries++
 		r.dbTime += span.Duration
 	}
+}
+
+// isOpen tells whether a span of the trace still runs.
+func (r *recording) isOpen(span *spanDoc) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.finished && span.open
 }
 
 // setSpan sets a span's attribute after it started: the rows a query returned, read later.

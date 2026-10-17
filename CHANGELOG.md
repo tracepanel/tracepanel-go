@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `tracepanel.TxContext(ctx, tx)`: the work done with it while the
+  transaction is open (an HTTP call, a log record, a span) goes under the
+  transaction's span, so the agent finds an HTTP call inside a
+  transaction. Once the transaction ends, it goes under the request again.
+
 ## 0.3.0 (2026-10-15)
 
 The first release, with `tracepanel-agent` 0.3.0, which the SDK downloads

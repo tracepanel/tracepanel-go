@@ -73,7 +73,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		attrs["http.response.status_code"] = response.StatusCode
 		failed = response.StatusCode >= 500
 	}
-	s.rec.done(s.span, id, "http.client", req.Method+" "+url.Host+url.Path, attrs, start, failed)
+	s.rec.done(s.parent(), id, "http.client", req.Method+" "+url.Host+url.Path, attrs, start, failed)
 	return response, err
 }
 

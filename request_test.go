@@ -328,3 +328,56 @@ func TestTheMiddlewareOfATracepanelThatIsOffIsTheHandler(t *testing.T) {
 		t.Fatal("Middleware wrapped a handler with Tracepanel off")
 	}
 }
+
+func TestCallsMadeWithATransactionsContextGoUnderIt(t *testing.T) {
+	recorded := record(t)
+	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer other.Close()
+	client := &http.Client{Transport: WrapTransport(nil)}
+	call := func(ctx context.Context) {
+		request, _ := http.NewRequestWithContext(ctx, "POST", other.URL+"/charges", nil)
+		if response, err := client.Do(request); err == nil {
+			response.Body.Close()
+		}
+	}
+
+	err := Command(context.Background(), "checkout", func(ctx context.Context) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		txCtx := TxContext(ctx, tx)
+		_, _ = tx.ExecContext(txCtx, "UPDATE stock SET n = n - 1")
+		call(txCtx)
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		call(txCtx)
+		return nil
+	})
+	doc := recorded.wait(t, 1)[0]
+
+	transactions := spans(doc, "transaction")
+	calls := spans(doc, "http.client")
+	if err != nil || len(transactions) != 1 || len(calls) != 2 {
+		t.Fatalf("%v; %d transactions, %d calls", err, len(transactions), len(calls))
+	}
+	// During the transaction, its span; once it committed, the span the context had before.
+	if *calls[0].ParentID != transactions[0].ID || *calls[1].ParentID != doc.Spans[0].ID {
+		t.Errorf("calls under %s and %s, transaction %s, root %s", *calls[0].ParentID, *calls[1].ParentID,
+			transactions[0].ID, doc.Spans[0].ID)
+	}
+}
+
+func TestTheContextOfATransactionOutsideATraceIsTheContext(t *testing.T) {
+	record(t)
+	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
+	ctx := context.Background()
+	tx, _ := db.BeginTx(ctx, nil)
+	defer tx.Rollback()
+
+	if TxContext(ctx, tx) != ctx {
+		t.Fatal("a new context outside a trace")
+	}
+}

@@ -98,6 +98,15 @@ replicaDriver := tracepanel.WrapDriver("pgx", tracepanel.DBAlias("replica"))
 replica, err := sql.Open(replicaDriver, replicaDSN)
 ```
 
+A transaction's statements go under it. For the rest of its work (an HTTP
+call, a log record, a span), the transaction's context puts it there too,
+so the console sees a call made inside a transaction:
+
+```go
+tx, err := db.BeginTx(ctx, nil)
+ctx = tracepanel.TxContext(ctx, tx)
+```
+
 ## Your own code, tasks and commands
 
 ```go

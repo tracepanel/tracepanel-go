@@ -195,7 +195,7 @@ func Span(ctx context.Context, name string) (context.Context, func()) {
 	if s == nil {
 		return ctx, func() {}
 	}
-	span := s.rec.begin(s.span, "function", name, attrMap{"code.origin": nilIfEmpty(origin())})
+	span := s.rec.begin(s.parent(), "function", name, attrMap{"code.origin": nilIfEmpty(origin())})
 	return within(ctx, s.rec, span.ID), func() { s.rec.end(span, false) }
 }
 
@@ -223,7 +223,7 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 	attrs := attrMap{"task.system": "go", "task.name": name, "task.trigger": "other"}
 	var started *linkDoc
 	if s := scopeOf(ctx); s != nil {
-		span := s.rec.done(s.span, newID(), "task.enqueue", name,
+		span := s.rec.done(s.parent(), newID(), "task.enqueue", name,
 			attrMap{"task.system": "go", "task.name": name, "code.origin": nilIfEmpty(origin())}, time.Now(), false)
 		started = &linkDoc{Kind: "enqueued_by", TraceID: s.rec.doc.ID, SpanID: span.ID}
 		attrs["task.trigger"] = "request"
