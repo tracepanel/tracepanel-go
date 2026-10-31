@@ -12,6 +12,9 @@
 //		// ...
 //		err = reader.CommitMessages(ctx, msg)
 //	}
+//
+// A message asks the app that handles it to profile its trace with the tracepanel-profile header ("1", or
+// "memory"), as the other SDKs' messages do; a message sent in a profiled trace asks the same.
 package kafkatrace
 
 import (
@@ -54,6 +57,7 @@ func (w *Writer) WriteMessages(ctx context.Context, msgs ...kafka.Message) error
 		return w.write(ctx, msgs...)
 	}
 	origin := hook.Origin()
+	asked := hook.Asked(ctx)
 	spans := map[string]hook.Span{}
 	var order []hook.Span
 	counts := map[string]int{}
@@ -77,10 +81,19 @@ func (w *Writer) WriteMessages(ctx context.Context, msgs ...kafka.Message) error
 			order = append(order, span)
 		}
 		counts[topic]++
+		// The caller's headers stay as they are: the message gets a copy with Tracepanel's.
+		headers := append(make([]kafka.Header, 0, len(msg.Headers)+3), msg.Headers...)
 		if header(msg.Headers, traceparentHeader) == "" {
-			msg.Headers = append(append(make([]kafka.Header, 0, len(msg.Headers)+2), msg.Headers...),
+			headers = append(headers,
 				kafka.Header{Key: traceparentHeader, Value: []byte(span.Traceparent())},
 				kafka.Header{Key: sentByHeader, Value: []byte(span.SentBy())})
+		}
+		if asked != "" && header(msg.Headers, hook.ProfileMessage) == "" {
+			// Its trace was asked to be profiled: so is the message's.
+			headers = append(headers, kafka.Header{Key: hook.ProfileMessage, Value: []byte(asked)})
+		}
+		if len(headers) > len(msg.Headers) {
+			msg.Headers = headers
 		}
 		out[i] = msg
 	}
@@ -157,8 +170,17 @@ func receive(msg kafka.Message, name string) hook.Trace {
 		attrs["task.trigger"] = "message"
 	}
 	trace := hook.Start("task", "task.run", name, attrs)
-	if trace != nil && linked {
+	if trace == nil {
+		return nil
+	}
+	if linked {
 		trace.Link("sent_by", sender[0], sender[1])
+	}
+	// The other SDKs' header, or the HTTP header's name a bridge from HTTP may have kept.
+	if asked := header(msg.Headers, hook.ProfileMessage); asked != "" {
+		trace.Ask(asked)
+	} else if asked := header(msg.Headers, hook.ProfileMetadata); asked != "" {
+		trace.Ask(asked)
 	}
 	return trace
 }

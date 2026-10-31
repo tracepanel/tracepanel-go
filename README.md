@@ -321,7 +321,10 @@ conn, err := grpc.NewClient(target, options...)
 Each call served is a trace of its own, named `Service/Method`; a server's
 fault (`Internal`, `Unavailable`, a panic) fails it. Each call made is a
 span of the trace in its context, and carries a `traceparent` in its
-metadata, so the server links its trace to it. The interceptors are there
+metadata, so the server links its trace to it. A call asks the server to
+profile its trace with the `x-tracepanel-profile` metadata key (`1`, as
+the HTTP header asks), and a call made in a profiled trace asks the same,
+so the servers down the chain profile their part. The interceptors are there
 one by one too (`UnaryServerInterceptor`, `StreamClientInterceptor`...),
 for a chain: a recovery interceptor goes before them.
 
@@ -341,7 +344,9 @@ err = kafkatrace.Process(ctx, msg, handleOrder)
 The messages a call sends to a topic are a span (`publish orders`), and
 each carries a `traceparent`. Each message handled is a task trace of its
 own, named after its handler and linked to the trace that sent it, even
-in another app with Tracepanel.
+in another app with Tracepanel. A message sent in a profiled trace carries
+`tracepanel-profile: 1`, as the other SDKs' messages do, and the trace
+that handles it is profiled too.
 
 ## Your own code, tasks and commands
 

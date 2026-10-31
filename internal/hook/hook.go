@@ -46,6 +46,9 @@ type Trace interface {
 	Fail()
 	// Finish ends it and sends it to the agent.
 	Finish()
+	// Ask is what the call or the message asked of profiling, as its header carries it (X-Tracepanel-Profile's
+	// value: "1", "memory"): the trace is profiled, from Context on. Called before Context.
+	Ask(value string)
 }
 
 // DB is a database as its options (tracepanel.DBAlias, DBSystem, DBName) name it.
@@ -111,4 +114,17 @@ var (
 	// Capture turns Tracepanel on for a test, each ended trace handed to deliver as the agent would get it (JSON),
 	// until restore.
 	Capture func(service string, deliver func(doc []byte)) (restore func())
+	// CaptureProfiles is Capture with the profiler on, as TRACEPANEL_PROFILE_ENABLED leaves it: a trace asked to
+	// be is profiled, every one when all is true (TRACEPANEL_PROFILE=1).
+	CaptureProfiles func(service string, all bool, deliver func(doc []byte)) (restore func())
+	// Asked is what the trace in ctx asks of profiling ("1", "memory"; "" nothing): a call or a message it sends asks
+	// the same of the app that gets it.
+	Asked func(ctx context.Context) string
+)
+
+// The ask to profile, as a call or a message carries it: gRPC metadata takes the HTTP header's name (lowercased, as
+// HTTP/2 sends it); a Kafka message the header the other SDKs' messages carry.
+const (
+	ProfileMetadata = "x-tracepanel-profile"
+	ProfileMessage  = "tracepanel-profile"
 )

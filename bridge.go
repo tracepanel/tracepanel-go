@@ -81,6 +81,21 @@ func init() {
 	}
 	hook.Log = bridgeLog
 	hook.Capture = capture
+	hook.CaptureProfiles = func(service string, all bool, deliver func([]byte)) func() {
+		restore := capture(service, deliver)
+		t := active.Load()
+		t.profiler, t.profileAll = newProfiler(), all
+		return func() {
+			t.profiler.wait(5 * time.Second)
+			restore()
+		}
+	}
+	hook.Asked = func(ctx context.Context) string {
+		if s := scopeOf(ctx); s != nil {
+			return s.rec.askedNow()
+		}
+		return ""
+	}
 }
 
 type bridgeSpan struct {
@@ -114,13 +129,21 @@ type bridgeTrace struct {
 	restore func()
 }
 
-// Context is ctx for the trace's work, which the integration runs on this goroutine: with every trace profiled
-// (TRACEPANEL_PROFILE=1), the goroutine carries its label until Finish.
+// Context is ctx for the trace's work, which the integration runs on this goroutine: when the trace is profiled (its
+// call asked, Ask, or TRACEPANEL_PROFILE=1 profiles every one), the goroutine carries its label until Finish.
 func (b *bridgeTrace) Context(ctx context.Context) context.Context {
-	if b.rec.profile == nil && b.restore == nil && b.t.profileAll {
+	if b.rec.profile == nil && b.restore == nil && b.t.profileReason(b.rec) != "" {
 		ctx, b.restore = b.t.profile(ctx, b.rec)
 	}
 	return within(ctx, b.rec, b.rec.root.ID)
+}
+
+func (b *bridgeTrace) Ask(value string) {
+	if asked := askedOf(value); asked != "" {
+		b.rec.mu.Lock()
+		b.rec.asked, b.rec.reason = asked, "header"
+		b.rec.mu.Unlock()
+	}
 }
 
 func (b *bridgeTrace) Rename(name string)                { b.rec.rename(name) }
