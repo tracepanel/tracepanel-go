@@ -3,7 +3,9 @@ name: Release
 # A tag that names a version (v0.10.0, as Go modules name them) releases it: once CI has passed on the tagged commit,
 # and the tag agrees with Version, AgentVersion is of its minor (a patch of its own) and the agent's checksums are of
 # AgentVersion, it gets a GitHub release, and the Go module proxy is asked for it, so pkg.go.dev and `go get` have it
-# at once. Nothing is uploaded: a Go module is its tag.
+# at once. Then each integration (gintrace, pgxtrace and the others, a module of its own) is tagged on the same
+# commit, <module>/v0.10.0, once it builds without its `replace` against the core the proxy now has. Nothing is
+# uploaded: a Go module is its tag.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
@@ -43,6 +45,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: "**/go.sum"
       - name: The tag is the version, the agent of its minor, and its checksums of it
         run: |
           version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' version.go)
@@ -52,6 +58,16 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME, Version $version, AgentVersion $agent, checksums of $checksums: the tag is the version, the agent of its minor, and make integrity was run for it"
             exit 1
           fi
+      - name: Each integration requires the core of the tag
+        run: |
+          for module in $(sed -n 's/^MODULES := //p' Makefile); do
+            [ "$module" = . ] && continue
+            required=$(awk '{ sub(/^require[ \t]+/, "") } $1 == "github.com/tracepanel/tracepanel-go" && $2 ~ /^v/ { print $2 }' "$module/go.mod")
+            if [ "$required" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::$module/go.mod requires the core ${required:-nowhere}, not $GITHUB_REF_NAME"
+              exit 1
+            fi
+          done
       - name: GitHub release, its notes from the changelog
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,3 +77,24 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
       - name: The module proxy fetches it
         run: curl --fail --silent --show-error "https://proxy.golang.org/github.com/tracepanel/tracepanel-go/@v/$GITHUB_REF_NAME.info"
+      # The `replace` of the core to the checkout is for this repository only (Go ignores a dependency's replace), so
+      # each integration is built as an app gets it: with the core from the proxy.
+      - name: Each integration builds against the released core
+        env:
+          GOFLAGS: -mod=mod
+        run: |
+          for module in $(sed -n 's/^MODULES := //p' Makefile); do
+            [ "$module" = . ] && continue
+            copy=$(mktemp -d) && cp -R "$module/." "$copy"
+            (cd "$copy" && go mod edit -dropreplace=github.com/tracepanel/tracepanel-go && go build ./... && go vet ./...) || exit 1
+          done
+      - name: The integrations' tags, and the module proxy fetches them
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for module in $(sed -n 's/^MODULES := //p' Makefile); do
+            [ "$module" = . ] && continue
+            git tag "$module/$GITHUB_REF_NAME" "$GITHUB_SHA"
+            git push origin "$module/$GITHUB_REF_NAME"
+            curl --fail --silent --show-error "https://proxy.golang.org/github.com/tracepanel/tracepanel-go/$module/@v/$GITHUB_REF_NAME.info"
+          done

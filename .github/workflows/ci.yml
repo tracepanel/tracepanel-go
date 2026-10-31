@@ -1,7 +1,8 @@
 name: CI
 
-# gofmt, go vet and the tests with the race detector, on every Go the module supports; then an app against the real
-# agent (e2e/), the one the SDK downloads.
+# gofmt, go vet and the tests with the race detector, of the core and of each integration (a module of its own, as
+# `make lint` loops them), on every Go the modules support; then an app against the real agent (e2e/), the one the
+# SDK downloads.
 on:
   push:
     branches: [main]
@@ -34,11 +35,18 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
+          cache-dependency-path: "**/go.sum"
       - name: gofmt
         if: runner.os != 'Windows'
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
-      - run: go vet ./...
-      - run: go test -race ./...
+      - name: go vet and the tests of every module
+        shell: bash
+        run: |
+          for module in $(sed -n 's/^MODULES := //p' Makefile); do
+            echo "::group::$module"
+            (cd "$module" && go vet ./... && go test -race ./...) || exit 1
+            echo "::endgroup::"
+          done
 
   e2e:
     name: An app against the real agent
