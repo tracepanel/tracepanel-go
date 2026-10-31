@@ -71,6 +71,8 @@ type Record struct {
 var (
 	// Enabled tells whether Tracepanel is on.
 	Enabled func() bool
+	// Traced tells whether ctx has a trace being recorded.
+	Traced func(ctx context.Context) bool
 	// Begin opens a span in the trace in ctx, under the span new work of ctx goes under: nil outside a trace.
 	Begin func(ctx context.Context, kind, name string, attrs map[string]any) Span
 	// Start begins a trace of its own: nil when Tracepanel is off.

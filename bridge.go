@@ -16,6 +16,7 @@ import (
 
 func init() {
 	hook.Enabled = func() bool { return active.Load() != nil }
+	hook.Traced = func(ctx context.Context) bool { return scopeOf(ctx) != nil }
 	hook.Begin = func(ctx context.Context, kind, name string, attrs map[string]any) hook.Span {
 		s := scopeOf(ctx)
 		if s == nil {
