@@ -3,6 +3,7 @@ package tracetest
 
 import (
 	"encoding/json"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -88,4 +89,14 @@ func Root(trace Doc) Doc {
 func Attrs(doc Doc) Doc {
 	attrs, _ := doc["attrs"].(Doc)
 	return attrs
+}
+
+// Equal compares two values as JSON reads them.
+func Equal(got, want any) bool {
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(want)
+	var x, y any
+	_ = json.Unmarshal(a, &x)
+	_ = json.Unmarshal(b, &y)
+	return reflect.DeepEqual(x, y)
 }

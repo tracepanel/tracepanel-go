@@ -611,6 +611,15 @@ func param(value any) any {
 		}
 		return param(inner)
 	default:
+		// An integer or a float of any size, as a library other than database/sql passes it.
+		switch number := reflect.ValueOf(v); number.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return number.Int()
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return number.Uint()
+		case reflect.Float32, reflect.Float64:
+			return number.Float()
+		}
 		return truncate(fmt.Sprint(v))
 	}
 }
