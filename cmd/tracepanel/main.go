@@ -1,7 +1,13 @@
 // Command tracepanel runs the Tracepanel agent the Go SDK runs (the one in the user's cache, downloaded the first
-// time), for what a Go project has no pip or npm to run it with:
+// time), for what a Go project has no pip or npm to run it with, and a built app recording:
 //
-//	go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp
+//	go install github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0
+//	tracepanel run ./shop
+//	tracepanel mcp
+//
+// `run` exits as the app exits, with its exit code, and says on stderr how an app that failed ended
+// ("tracepanel: ./shop exited with status 3"): under `go run`, which exits 1 whatever the program's code, that line
+// is where the app's status is.
 //
 // Its commands:
 //
@@ -22,6 +28,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -39,6 +46,9 @@ const usage = `usage: tracepanel <command>
   mcp [--values]                     an MCP server for AI coding agents, on stdin and stdout
   agent [ARGS...]                    the agent itself, with its own arguments (agent --help lists them)
   version                            this SDK's version and the agent's`
+
+// stderr is where the command says what went wrong (a test's buffer).
+var stderr io.Writer = os.Stderr
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -66,7 +76,7 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, usage)
 			return 2
 		}
-		return foreground(app(rest))
+		return foreground(app(rest), rest[0])
 	case "dev":
 		var command []string
 		if at := slices.Index(rest, "--"); at >= 0 {
@@ -84,7 +94,7 @@ func run(args []string) int {
 				fmt.Fprintf(os.Stderr, "tracepanel: %v\n", err)
 				return 1
 			}
-			go func() { _ = cmd.Wait() }()
+			go func() { reportExit(rest[0], cmd.Wait()) }()
 			defer func() { _ = cmd.Process.Kill() }()
 		}
 		return agent([]string{"--dir", dir, "--serve", "127.0.0.1:" + port})
@@ -118,11 +128,12 @@ func agent(args []string) int {
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return foreground(cmd)
+	return foreground(cmd, "")
 }
 
-// foreground runs cmd and exits as it exits: Ctrl-C reaches it (it stops on its own) and a SIGTERM is passed on.
-func foreground(cmd *exec.Cmd) int {
+// foreground runs cmd and exits as it exits: Ctrl-C reaches it (it stops on its own) and a SIGTERM is passed on. An
+// app (`name`, "" for the agent) that fails says how it ended on stderr.
+func foreground(cmd *exec.Cmd, name string) int {
 	signal.Ignore(os.Interrupt)
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "tracepanel: %v\n", err)
@@ -136,16 +147,46 @@ func foreground(cmd *exec.Cmd) int {
 		}
 	}()
 	err := cmd.Wait()
+	if name != "" {
+		reportExit(name, err)
+	}
+	return exitCode(err)
+}
+
+// exitCode is the command's for a child that ended with err: its own, 128 and the signal's number for one a signal
+// ended (as a shell has it), 1 when it couldn't run.
+func exitCode(err error) int {
 	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		if code := exit.ExitCode(); code >= 0 {
-			return code
+	if !errors.As(err, &exit) {
+		if err != nil {
+			fmt.Fprintf(stderr, "tracepanel: %v\n", err)
+			return 1
 		}
-		return 1
+		return 0
 	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "tracepanel: %v\n", err)
-		return 1
+	if code := exit.ExitCode(); code >= 0 {
+		return code
 	}
-	return 0
+	if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() > 0 {
+		return 128 + int(status.Signal())
+	}
+	return 1
+}
+
+// reportExit says on stderr how an app that failed ended: its status, or the signal that ended it (not Ctrl-C's nor
+// SIGTERM's, which this command passed on).
+func reportExit(name string, err error) {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return
+	}
+	if code := exit.ExitCode(); code > 0 {
+		fmt.Fprintf(stderr, "tracepanel: %s exited with status %d\n", name, code)
+		return
+	}
+	if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		if signal := status.Signal(); signal != syscall.SIGINT && signal != syscall.SIGTERM {
+			fmt.Fprintf(stderr, "tracepanel: %s ended by %s\n", name, exit.ProcessState)
+		}
+	}
 }
