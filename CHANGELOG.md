@@ -131,14 +131,18 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0`):
   `tracepanel mcp`, the agent's MCP server for AI coding agents, `dev`
   for its console in the foreground (`dev -- ./shop` with the app beside
-  it), and `run ./shop` for a built binary, recording, which exits with
+  it; `dev --port 9100 -- ./shop` too), and `run ./shop` (or
+  `run -- ./shop`) for a built binary, recording, which exits with
   the app's code and says on stderr how an app that failed ended
   (`tracepanel: ./shop exited with status 3`), the app's status under
   `go run` too, which exits 1 whatever the code.
 - The agent downloaded the first time from its npm platform package (or
   `TRACEPANEL_NPM_REGISTRY`, a mirror), checked against the SHA-512 of its
   binary the SDK was released with, and kept in the user's cache, where
-  it is checked again the first time a process runs it.
+  it is checked again the first time a process runs it: in
+  `TRACEPANEL_CACHE_DIR`, else `%LOCALAPPDATA%\tracepanel` on Windows,
+  else `$XDG_CACHE_HOME/tracepanel`, else `~/.cache/tracepanel` (macOS
+  too).
 - A trace keeps at most 2,000 spans and 1,000 log records, as the agent
   stores it, and counts the rest.
 - Linux, macOS and Windows: CI runs the tests and an app against the real

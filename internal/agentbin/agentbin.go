@@ -263,9 +263,13 @@ func isMusl() bool {
 }
 
 // cached is where the platform's agent at Version is kept: <cache>/agent/<version>/<platform>/tracepanel-agent
-// (.exe on Windows).
+// (.exe on Windows), in Windows' cache for a win32 platform.
 func cached(platform string) string {
-	return filepath.Join(CacheDir(), "agent", Version, platform, executableName(platform))
+	goos := runtime.GOOS
+	if strings.HasPrefix(platform, "win32-") {
+		goos = "windows"
+	}
+	return filepath.Join(cacheDir(goos), "agent", Version, platform, executableName(platform))
 }
 
 func executableName(platform string) string {
@@ -275,13 +279,18 @@ func executableName(platform string) string {
 	return Binary
 }
 
-// CacheDir is TRACEPANEL_CACHE_DIR, else the user's cache: %LOCALAPPDATA% on Windows, $XDG_CACHE_HOME or ~/.cache
-// elsewhere, as every SDK keeps it.
+// CacheDir is TRACEPANEL_CACHE_DIR, else the user's cache, as every SDK keeps it: %LOCALAPPDATA%\tracepanel on
+// Windows; $XDG_CACHE_HOME/tracepanel, then ~/.cache/tracepanel elsewhere (macOS too).
 func CacheDir() string {
+	return cacheDir(runtime.GOOS)
+}
+
+// cacheDir is CacheDir on goos.
+func cacheDir(goos string) string {
 	if named := os.Getenv("TRACEPANEL_CACHE_DIR"); named != "" {
 		return named
 	}
-	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+	if local := os.Getenv("LOCALAPPDATA"); goos == "windows" && local != "" {
 		return filepath.Join(local, "tracepanel")
 	}
 	if xdg := os.Getenv("XDG_CACHE_HOME"); xdg != "" {

@@ -67,11 +67,14 @@ The agent is a program of its own, which keeps the traces and finds the
 issues. You don't install it: the SDK downloads its own version of it the
 first time, from the agent's npm package for your platform, checks the
 binary against the SHA-512 the SDK was released with, and keeps it in
-`~/.cache/tracepanel/` for every project, where it is checked again the
-first time a process runs it. Behind a proxy, set `HTTPS_PROXY`; with an
-npm mirror, `TRACEPANEL_NPM_REGISTRY` (or npm's own
-`npm_config_registry`). `TRACEPANEL_AGENT_BIN` names another agent, and
-without a network the SDK runs `tracepanel-agent` from the `PATH`.
+the user's cache for every project, where it is checked again the first
+time a process runs it: `TRACEPANEL_CACHE_DIR`, else
+`%LOCALAPPDATA%\tracepanel\` on Windows, else
+`$XDG_CACHE_HOME/tracepanel/`, else `~/.cache/tracepanel/` (macOS too).
+Behind a proxy, set `HTTPS_PROXY`; with an npm mirror,
+`TRACEPANEL_NPM_REGISTRY` (or npm's own `npm_config_registry`).
+`TRACEPANEL_AGENT_BIN` names another agent, and without a network the SDK
+runs `tracepanel-agent` from the `PATH`.
 
 The SDK and the agent share a minor version: Tracepanel for Go 0.10.x runs
 `tracepanel-agent` 0.10.x.
@@ -448,7 +451,7 @@ comes from the environment:
 | | `TRACEPANEL_CAPTURE_REQUEST` | on; `0` keeps no headers, query, cookies or body |
 | | `TRACEPANEL_AGENT_BIN` | the one the SDK downloads |
 | | `TRACEPANEL_AGENT` | `auto`; an agent elsewhere (`tcp:host:port`), never started; `off` starts none |
-| | `TRACEPANEL_CACHE_DIR` | `~/.cache/tracepanel`, where the downloaded agent is kept |
+| | `TRACEPANEL_CACHE_DIR` | `%LOCALAPPDATA%\tracepanel` on Windows, else `$XDG_CACHE_HOME/tracepanel` or `~/.cache/tracepanel`, where the downloaded agent is kept |
 | | `TRACEPANEL_NPM_REGISTRY` | npm's registry, where the agent is downloaded from |
 | | `TRACEPANEL_N_PLUS_ONE_THRESHOLD` | `3`, repeats that make an N+1 |
 | | `TRACEPANEL_N_PLUS_ONE_MIN_MS` | `5`, the time repeated cache calls must cost together |

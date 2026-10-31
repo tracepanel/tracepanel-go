@@ -151,6 +151,37 @@ func TestEachPlatformHasItsPackageAndItsChecksum(t *testing.T) {
 	}
 }
 
+// The cache is TRACEPANEL_CACHE_DIR, else %LOCALAPPDATA%\tracepanel on Windows only, else
+// $XDG_CACHE_HOME/tracepanel, else ~/.cache/tracepanel (macOS too).
+func TestCacheDirOnEachOS(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	local, xdg, named := filepath.Join(home, "local"), filepath.Join(home, "xdg"), filepath.Join(home, "named")
+	cases := []struct {
+		goos, named, local, xdg, want string
+	}{
+		{"windows", named, local, xdg, named},
+		{"windows", "", local, xdg, filepath.Join(local, "tracepanel")},
+		{"windows", "", "", xdg, filepath.Join(xdg, "tracepanel")},
+		{"windows", "", "", "", filepath.Join(home, ".cache", "tracepanel")},
+		{"linux", named, local, xdg, named},
+		{"linux", "", local, xdg, filepath.Join(xdg, "tracepanel")},
+		{"linux", "", local, "", filepath.Join(home, ".cache", "tracepanel")},
+		{"darwin", "", local, xdg, filepath.Join(xdg, "tracepanel")},
+		{"darwin", "", local, "", filepath.Join(home, ".cache", "tracepanel")},
+	}
+	for _, c := range cases {
+		t.Setenv("TRACEPANEL_CACHE_DIR", c.named)
+		t.Setenv("LOCALAPPDATA", c.local)
+		t.Setenv("XDG_CACHE_HOME", c.xdg)
+
+		if got := cacheDir(c.goos); got != c.want {
+			t.Errorf("%+v: %q", c, got)
+		}
+	}
+}
+
 // Windows' agent, wherever the test runs: its package's binary is tracepanel-agent.exe, kept as that in
 // %LOCALAPPDATA%\tracepanel, and run by its name.
 func TestWindowsAgentIsTheExeInLocalAppData(t *testing.T) {
