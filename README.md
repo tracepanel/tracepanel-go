@@ -32,6 +32,13 @@ Run the app with `go run .`. The first request starts the agent for the
 project, and the response tells you where its console is: the badge on an
 HTML page opens it, and `Tracepanel-Url` names it.
 
+That is all a net/http app with database/sql needs. The calls it makes
+through `http.DefaultClient` with the request's context, and what it logs
+through `slog`, are recorded too. Other routers, pgx, Redis, zap, zerolog,
+gRPC and Kafka take a line each: see [What it records](#what-it-records).
+
+### Development only
+
 Tracepanel records in development only, as every Tracepanel SDK does:
 when the app runs under `go run`, with `TRACEPANEL_ENABLED=1`, or with
 `Config.Enabled`. A binary built with `go build` (your production build,
@@ -44,6 +51,8 @@ binary, run it through the SDK's command, which sets
 ```bash
 go run github.com/tracepanel/tracepanel-go/cmd/tracepanel run ./shop
 ```
+
+### The agent
 
 The agent is a program of its own, which keeps the traces and finds the
 issues. You don't install it: the SDK downloads its own version of it the
