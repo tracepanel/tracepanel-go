@@ -291,6 +291,15 @@ database's kind comes from the dialector (`postgres`, `mysql`, `sqlite`,
 `tracepanel.Driver` takes, and the console runs `EXPLAIN` on the database
 a query came from.
 
+The rows a query returned are there for `Find`, `First`, `Pluck`, `Count`
+and for `Scan` (`db.Raw(...).Scan(&rows)`), whose count GORM tells its
+logger: the plugin wraps the `gorm.Config.Logger` to read it (a
+`Session` given a logger of its own after `db.Use` goes without). Not for
+`Rows()` and `Row()`: your code reads those rows from the `*sql.Rows` that
+`database/sql` hands over, which nothing can watch. With
+`tracepanel.Driver` as the dialector's `DriverName` (in place of the
+plugin), the driver counts them as it hands each row over.
+
 Use the plugin or `tracepanel.Driver` as the dialector's `DriverName`, not
 both. A database opened through `tracepanel.Driver` is recorded already,
 and the plugin leaves it to it.

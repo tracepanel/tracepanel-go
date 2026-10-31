@@ -5,7 +5,9 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -314,34 +316,76 @@ func TestAFailedStatementSaysWhy(t *testing.T) {
 	}
 }
 
+// traced is a GORM logger that keeps what GORM tells it: the app's, which the plugin's wraps.
+type traced struct {
+	logger.Interface
+	mu   sync.Mutex
+	rows []int64
+}
+
+func (l *traced) LogMode(logger.LogLevel) logger.Interface { return l }
+
+func (l *traced) Trace(_ context.Context, _ time.Time, fc func() (string, int64), _ error) {
+	_, rows := fc()
+	l.mu.Lock()
+	l.rows = append(l.rows, rows)
+	l.mu.Unlock()
+}
+
 func TestRawSQLAndRows(t *testing.T) {
 	recorder := tracetest.Record(t)
 	db := open(t, nil)
+	app := &traced{Interface: logger.Discard}
+	db.Config.Logger.(*rowsLogger).Interface = app
 
 	trace := command(t, recorder, func(ctx context.Context) error {
 		var titles []string
 		if err := db.WithContext(ctx).Raw("SELECT title FROM books WHERE id > ?", 1).Scan(&titles).Error; err != nil {
 			return err
 		}
+		var none []Book
+		if err := db.WithContext(ctx).Raw("SELECT * FROM books WHERE id > ?", 100).Scan(&none).Error; err != nil {
+			return err
+		}
+		// Debug is a Session with the logger at another level: still the plugin's.
+		var books []struct{ Title string }
+		if err := db.Debug().WithContext(ctx).Model(&Book{}).Select("title").Where("author_id = ?", 1).Scan(&books).Error; err != nil {
+			return err
+		}
 		rows, err := db.WithContext(ctx).Model(&Book{}).Select("title").Rows()
 		if err != nil {
 			return err
 		}
+		for rows.Next() {
+		}
 		return rows.Close()
 	})
 
-	spans := tracetest.Spans(trace, "sql")
-	if len(spans) != 2 {
-		t.Fatalf("sql spans: %v", spans)
+	got := []any{}
+	for _, span := range tracetest.Spans(trace, "sql") {
+		attrs := tracetest.Attrs(span)
+		returned, counted := attrs["db.response.returned_rows"]
+		got = append(got, []any{attrs["db.statement"], returned, counted})
 	}
-
-	raw := tracetest.Attrs(spans[0])
-	if raw["db.statement"] != "SELECT title FROM books WHERE id > ?" || !tracetest.Equal(raw["db.params"], []any{1}) {
+	want := []any{
+		[]any{"SELECT title FROM books WHERE id > ?", 2, true},
+		[]any{"SELECT * FROM books WHERE id > ?", 0, true},
+		[]any{"SELECT `title` FROM `books` WHERE author_id = ?", 2, true},
+		// Rows() handed to the app: what it reads of them can't be seen.
+		[]any{"SELECT `title` FROM `books`", nil, false},
+	}
+	if !tracetest.Equal(got, want) {
+		t.Fatalf("sql spans: %v", got)
+	}
+	raw := tracetest.Attrs(tracetest.Spans(trace, "sql")[0])
+	if !tracetest.Equal(raw["db.params"], []any{1}) {
 		t.Fatalf("raw: %v", raw)
 	}
-
-	if tracetest.Attrs(spans[1])["db.statement"] != "SELECT `title` FROM `books`" {
-		t.Fatalf("rows: %v", spans[1])
+	// The app's logger still gets what GORM tells it: Scan's rows, and -1 of the Rows() it ran.
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if !tracetest.Equal(app.rows, []int64{2, 0, 2, -1}) {
+		t.Fatalf("the app's logger: %v", app.rows)
 	}
 }
 
