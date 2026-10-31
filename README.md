@@ -347,11 +347,11 @@ exits, so its traces reach the agent.
 per database too, by its kind: `TRACEPANEL_SLOW_SQL_MS=100,snowflake=3000`
 holds every database to 100 ms but Snowflake, to 3 s. Without one, the
 agent holds an analytical warehouse (Snowflake, BigQuery, Databricks,
-Redshift, ClickHouse) to 2 s per query. The kind comes from the driver:
-`pgx` and `lib/pq` are `postgresql`, gosnowflake's is `snowflake`, and
-so are BigQuery's, Databricks', Trino's, MySQL's, SQLite's, SQL
-Server's and Oracle's drivers told; for another,
-`tracepanel.DBSystem("cockroachdb")` names it.
+Redshift, ClickHouse) to 2 s per query. The kind comes from the driver's
+name: `pgx` and `lib/pq` are `postgresql`, gosnowflake's is `snowflake`.
+The drivers of BigQuery, Databricks, Redshift, Trino, ClickHouse, DuckDB,
+MySQL, MariaDB, SQLite, SQL Server and Oracle are told the same way. For
+another database, `tracepanel.DBSystem("cockroachdb")` names it.
 
 Without an agent (none could be had, or it couldn't start), the log says
 why once. Responses keep their headers, pages get no badge, and traces
