@@ -138,7 +138,16 @@ time went, from Go's own profiler (`runtime/pprof`). The request's
 goroutine carries a profiler label, and so do the goroutines it starts, so
 a profile holds only that request's samples, however many requests run at
 once. A task it starts with `tracepanel.Go` is profiled too.
-`TRACEPANEL_PROFILE=1` (or `Config.Profile`) profiles every trace.
+`TRACEPANEL_PROFILE=1` (or `Config.Profile`) profiles every trace, and
+your code can profile the rest of the trace it runs in:
+
+```go
+ctx = tracepanel.Profile(ctx)
+```
+
+A profiled trace says why in `profile.reason`: `header`, `cookie` (the
+panel's toggle), `parent` (started by a profiled trace), `setting` or
+`code`.
 
 Go's profiler samples 100 times a second of CPU time: a request that takes
 less than 10 ms of CPU may have no sample, and time spent waiting (for the

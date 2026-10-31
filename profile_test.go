@@ -424,3 +424,104 @@ func TestAnIntegrationsTraceIsProfiledWithProfileAll(t *testing.T) {
 		t.Fatal("no profile")
 	}
 }
+
+func TestAProfiledTraceSaysWhyItIs(t *testing.T) {
+	cases := map[string]struct {
+		header, cookie string
+		all            bool
+		want           any
+	}{
+		"the header":           {header: "1", want: "header"},
+		"the header, memory":   {header: "memory", want: "header"},
+		"the panel's cookie":   {cookie: "1", want: "cookie"},
+		"the setting":          {all: true, want: "setting"},
+		"asked, with settings": {cookie: "1", all: true, want: "cookie"},
+		"nothing":              {want: nil},
+		"an ask it can't read": {header: "yes please", want: nil},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			recorded := record(t)
+			recorded.t.profiler = newProfiler()
+			recorded.t.profileAll = c.all
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			if c.header != "" {
+				request.Header.Set("X-Tracepanel-Profile", c.header)
+			}
+			if c.cookie != "" {
+				request.AddCookie(&http.Cookie{Name: "tracepanel_profile", Value: c.cookie})
+			}
+
+			recorded.t.middleware(http.NotFoundHandler()).ServeHTTP(httptest.NewRecorder(), request)
+			Flush(time.Second)
+
+			doc := recorded.wait(t, 1)[0]
+			if doc.Attrs["profile.reason"] != c.want || (doc.Profile != nil) != (c.want != nil) {
+				t.Fatalf("profile.reason %v, profile %+v", doc.Attrs["profile.reason"], doc.Profile)
+			}
+		})
+	}
+}
+
+func TestATaskOfAProfiledTraceSaysItsParentAskedForIt(t *testing.T) {
+	recorded := record(t)
+	recorded.t.profiler = newProfiler()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /signup", func(w http.ResponseWriter, r *http.Request) {
+		Go(r.Context(), "send welcome email", func(ctx context.Context) error { return nil })
+	})
+	request := httptest.NewRequest(http.MethodGet, "/signup", nil)
+	request.Header.Set("X-Tracepanel-Profile", "1")
+
+	recorded.t.middleware(mux).ServeHTTP(httptest.NewRecorder(), request)
+	Flush(time.Second)
+
+	reasons := map[string]any{}
+	for _, doc := range recorded.wait(t, 2) {
+		reasons[doc.Kind] = doc.Attrs["profile.reason"]
+	}
+	if !equalJSON(reasons, map[string]any{"http": "header", "task": "parent"}) {
+		t.Fatalf("reasons %v", reasons)
+	}
+}
+
+func TestCodeProfilesItsTraceFromWhereItAsks(t *testing.T) {
+	recorded := record(t)
+	recorded.t.profiler = newProfiler()
+	var asked string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.Header.Get("X-Tracepanel-Profile")
+	}))
+	defer upstream.Close()
+	client := &http.Client{Transport: WrapTransport(http.DefaultTransport)}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /report", func(w http.ResponseWriter, r *http.Request) {
+		ctx := Profile(r.Context())
+		// Asked twice: profiled once.
+		ctx = Profile(ctx)
+		burnProfiled(100 * time.Millisecond)
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, upstream.URL, nil)
+		if response, err := client.Do(request); err == nil {
+			response.Body.Close()
+		}
+		Go(ctx, "mail the report", func(context.Context) error { return nil })
+	})
+
+	recorded.t.middleware(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/report", nil))
+	Flush(time.Second)
+
+	reasons := map[string]any{}
+	for _, doc := range recorded.wait(t, 2) {
+		reasons[doc.Kind] = doc.Attrs["profile.reason"]
+		if doc.Kind == "http" && (doc.Profile == nil || !functions(doc.Profile)["burnProfiled"]) {
+			t.Fatalf("profile %+v", doc.Profile)
+		}
+	}
+	if !equalJSON(reasons, map[string]any{"http": "code", "task": "parent"}) || asked != "1" {
+		t.Fatalf("reasons %v, the call asked %q", reasons, asked)
+	}
+	// Outside a trace: nothing to profile.
+	if ctx := context.Background(); Profile(ctx) != ctx {
+		t.Fatal("a context without a trace changed")
+	}
+}

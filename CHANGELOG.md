@@ -51,7 +51,10 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   `runtime/pprof`, its goroutines labeled so that only its own samples
   are its, with any number of requests at once; a task it starts with
   `tracepanel.Go` is profiled too, and `TRACEPANEL_PROFILE=1` (or
-  `Config.Profile`) profiles every trace. One CPU profile runs on from
+  `Config.Profile`) profiles every trace, and `tracepanel.Profile(ctx)`
+  the rest of the trace from where the code asks; a profiled trace says
+  why in `profile.reason` (`header`, `cookie`, `parent`, `setting`,
+  `code`). One CPU profile runs on from
   one profiled trace to the next, cut once none ran for 200 ms (every 2 s
   under steady load), so back-to-back traces lose no samples to the
   profiler's restart (up to 100 ms on macOS); a trace running while a cut

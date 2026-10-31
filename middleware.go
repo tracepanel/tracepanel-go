@@ -50,7 +50,7 @@ func (t *tracepanel) middleware(next http.Handler) http.Handler {
 			attrs[key] = value
 		}
 		rec := t.begin("http", "http", r.Method+" "+r.URL.Path, attrs)
-		rec.asked = profileAsked(r)
+		rec.asked, rec.reason = profileAsked(r)
 		ctx, restore := t.profile(r.Context(), rec)
 		defer restore()
 		req := r.WithContext(within(ctx, rec, rec.root.ID))
@@ -96,15 +96,25 @@ const (
 	profileCookie = "tracepanel_profile"
 )
 
-// profileAsked is what the request asks of profiling: "1", "memory", or "" for nothing.
-func profileAsked(r *http.Request) string {
-	asked := strings.TrimSpace(r.Header.Get(profileHeader))
-	if asked == "" {
+// profileAsked is what the request asks of profiling ("1", "memory", or "" for nothing), and what asked it: the
+// header ("header") or the panel's cookie ("cookie").
+func profileAsked(r *http.Request) (asked, reason string) {
+	value, reason := strings.TrimSpace(r.Header.Get(profileHeader)), "header"
+	if value == "" {
 		if cookie, err := r.Cookie(profileCookie); err == nil {
-			asked = cookie.Value
+			value, reason = cookie.Value, "cookie"
 		}
 	}
-	switch asked {
+	if asked = askedOf(value); asked == "" {
+		return "", ""
+	}
+	return asked, reason
+}
+
+// askedOf is what a header's value asks of profiling: "1" (or "true") the profile, "memory" with its memory; ""
+// for anything else.
+func askedOf(value string) string {
+	switch strings.TrimSpace(value) {
 	case "1", "true":
 		return "1"
 	case "memory":

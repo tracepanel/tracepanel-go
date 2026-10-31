@@ -51,9 +51,9 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// RoundTrip mustn't change the caller's request: a copy carries the header.
 	out := req.Clone(req.Context())
 	out.Header.Set(traceparentHeader, outgoing(s.rec, id))
-	if s.rec.asked != "" && out.Header.Get(profileHeader) == "" {
+	if asked := s.rec.askedNow(); asked != "" && out.Header.Get(profileHeader) == "" {
 		// The request was asked to be profiled: so is the app it calls.
-		out.Header.Set(profileHeader, s.rec.asked)
+		out.Header.Set(profileHeader, asked)
 	}
 	response, err := t.base.RoundTrip(out)
 	url := req.URL
