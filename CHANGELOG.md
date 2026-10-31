@@ -65,10 +65,16 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
     handler a `view` span (not on Echo v5, which doesn't tell it), an
     error a handler returns answered by Echo's error handler inside the
     trace, and the badge naming the router (`Go 1.27 · gin`).
-  - `pgxtrace.Tracer()`, pgx v5's tracer on a `pgx.Conn` or a `pgxpool.Pool`:
-    each statement, batch, copy and transaction as `tracepanel.Driver` records
-    them, `EXPLAIN` from the console, and `pgxtrace.TxContext` for the
-    rest of a transaction's work.
+  - `pgxtrace.Tracer()`, pgx v5's tracer on a `pgx.Conn` or a
+    `pgxpool.Pool`: each statement, batch, copy and transaction as
+    `tracepanel.Driver` records them, `EXPLAIN` from the console, and
+    `pgxtrace.TxContext` for the rest of a transaction's work.
+  - `db.Use(gormtrace.Plugin())` for GORM v2: each statement of a create,
+    query, update, delete or raw SQL with its parameters, the rows it
+    returned or changed and the line that ran it, each transaction
+    (GORM's own around a write too), `EXPLAIN` from the console, and
+    `gormtrace.TxContext` for the rest of a transaction's work. A
+    database GORM opened through `tracepanel.Driver` is left to it.
   - `redistrace.Instrument(rdb)`, go-redis v9: each command a span with
     its key, the database and the server, a pipeline one span, so the
     agent finds a command repeated for each item and duplicates.

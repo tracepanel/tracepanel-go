@@ -16,6 +16,7 @@ import (
 
 func init() {
 	hook.Enabled = func() bool { return active.Load() != nil }
+	hook.Records = records
 	hook.Traced = func(ctx context.Context) bool { return scopeOf(ctx) != nil }
 	hook.Begin = func(ctx context.Context, kind, name string, attrs map[string]any) hook.Span {
 		s := scopeOf(ctx)
@@ -23,6 +24,17 @@ func init() {
 			return nil
 		}
 		return &bridgeSpan{rec: s.rec, span: s.rec.begin(s.parent(), kind, name, attrs)}
+	}
+	hook.Done = func(ctx context.Context, under hook.Span, kind, name string, attrs map[string]any, start time.Time, failed bool) {
+		s := scopeOf(ctx)
+		if s == nil {
+			return
+		}
+		parent := s.parent()
+		if span, ok := under.(*bridgeSpan); ok && span.rec == s.rec {
+			parent = span.span.ID
+		}
+		s.rec.done(parent, newID(), kind, name, attrs, start, failed)
 	}
 	hook.Start = func(kind, rootKind, name string, attrs map[string]any) hook.Trace {
 		t := active.Load()
@@ -62,6 +74,8 @@ func init() {
 		attrs["db.client"] = client
 		return name, attrs
 	}
+	hook.System = systemOf
+	hook.Recorded = recorded
 	hook.Explain = func(db hook.DB, sqlDB *sql.DB) {
 		remember(&database{alias: db.Alias, system: db.System, namespace: db.Namespace, sql: sqlDB})
 	}

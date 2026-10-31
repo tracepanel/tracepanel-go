@@ -2,7 +2,7 @@
 .PHONY: lint fmt test tidy e2e integrity
 
 # The core module, then each integration's: a module of its own, tagged <dir>/vX.Y.Z at a release.
-MODULES := . pgxtrace gintrace echotrace echo5trace redistrace zaptrace zerologtrace grpctrace kafkatrace
+MODULES := . pgxtrace gormtrace gintrace echotrace echo5trace redistrace zaptrace zerologtrace grpctrace kafkatrace
 
 lint: ## gofmt, go vet and the tests of every module, as CI runs them
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)

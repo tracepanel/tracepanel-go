@@ -8,8 +8,9 @@ every request.
 
 This SDK records a Go app's requests and sends them to Tracepanel's agent,
 which keeps them, finds the issues and serves the console. It has no
-dependencies: the integrations with gin, Echo, pgx, go-redis, zap, zerolog,
-gRPC and Kafka are modules of their own, and you get only those you use.
+dependencies: the integrations with gin, Echo, pgx, GORM, go-redis, zap,
+zerolog, gRPC and Kafka are modules of their own, and you get only those you
+use.
 
 ## Setup
 
@@ -34,8 +35,9 @@ HTML page opens it, and `Tracepanel-Url` names it.
 
 That is all a net/http app with database/sql needs. The calls it makes
 through `http.DefaultClient` with the request's context, and what it logs
-through `slog`, are recorded too. Other routers, pgx, Redis, zap, zerolog,
-gRPC and Kafka take a line each: see [What it records](#what-it-records).
+through `slog`, are recorded too. Other routers, pgx, GORM, Redis, zap,
+zerolog, gRPC and Kafka take a line each: see
+[What it records](#what-it-records).
 
 ### Development only
 
@@ -149,7 +151,8 @@ be told.
 ### Databases
 
 `tracepanel.Driver` works wherever a driver's name goes: `sqlx.Open`, or
-GORM's `DriverName`. For a driver's connector, `tracepanel.WrapConnector`
+GORM's `DriverName` (or use the [GORM plugin](#gorm), not both). For a
+driver's connector, `tracepanel.WrapConnector`
 wraps it for `sql.OpenDB`:
 
 ```go
@@ -183,6 +186,7 @@ Each is a module of its own, so the core keeps no dependencies:
 | Echo v4 | `github.com/tracepanel/tracepanel-go/echotrace` | requests, named by route |
 | Echo v5 | `github.com/tracepanel/tracepanel-go/echo5trace` | requests, named by route |
 | pgx v5 | `github.com/tracepanel/tracepanel-go/pgxtrace` | SQL and transactions |
+| GORM v2 | `github.com/tracepanel/tracepanel-go/gormtrace` | SQL and transactions |
 | go-redis v9 | `github.com/tracepanel/tracepanel-go/redistrace` | Redis commands |
 | zap | `github.com/tracepanel/tracepanel-go/zaptrace` | log records |
 | zerolog | `github.com/tracepanel/tracepanel-go/zerologtrace` | log records |
@@ -219,8 +223,8 @@ error handler within the trace. Pass `c.Request().Context()` down.
 
 ### pgx
 
-The tracer records each statement as `tracepanel.Driver` does, on a `pgx.Conn` or
-a `pgxpool.Pool`:
+The tracer records each statement as `tracepanel.Driver` does, on a
+`pgx.Conn` or a `pgxpool.Pool`:
 
 ```go
 config, err := pgxpool.ParseConfig(dsn)
@@ -231,9 +235,30 @@ pool, err := pgxpool.NewWithConfig(ctx, config)
 A transaction's statements go under it. For the rest of its work,
 `pgxtrace.TxContext(ctx, tx)` puts it there too. A batch's queries are
 recorded as they are read, and a `CopyFrom` as one statement.
-`pgxtrace.Tracer` takes the options `tracepanel.Driver` takes (`tracepanel.DBAlias`
-for a second database), and the console runs `EXPLAIN` on the database a
-query came from.
+`pgxtrace.Tracer` takes the options `tracepanel.Driver` takes
+(`tracepanel.DBAlias` for a second database), and the console runs
+`EXPLAIN` on the database a query came from.
+
+### GORM
+
+```go
+db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+err = db.Use(gormtrace.Plugin())
+```
+
+The plugin records each statement as `tracepanel.Driver` does, with the
+line of your code that ran it, and each transaction, GORM's own around a
+create, update or delete too. Run the queries with the request's context,
+`db.WithContext(ctx)`. For the rest of a transaction's work,
+`gormtrace.TxContext(ctx, tx)` puts it under the transaction. The
+database's kind comes from the dialector (`postgres`, `mysql`, `sqlite`,
+`sqlserver`, `clickhouse`); `gormtrace.Plugin` takes the options
+`tracepanel.Driver` takes, and the console runs `EXPLAIN` on the database
+a query came from.
+
+Use the plugin or `tracepanel.Driver` as the dialector's `DriverName`, not
+both. A database opened through `tracepanel.Driver` is recorded already,
+and the plugin leaves it to it.
 
 ### go-redis
 
@@ -328,7 +353,8 @@ exits, so its traces reach the agent.
 
 `tracepanel.WrapHandler(mux, tracepanel.Config{...})` and
 `tracepanel.Setup(...)` take a `Config`; with `Enabled`, call `Setup` before
-`tracepanel.Driver`, so the database is recorded too. What it leaves empty comes from the environment:
+`tracepanel.Driver`, so the database is recorded too. What it leaves empty
+comes from the environment:
 
 | Field | Variable | Default |
 | --- | --- | --- |

@@ -318,6 +318,16 @@ func TestADriverIsRegisteredOnceUnderItsOwnName(t *testing.T) {
 	}
 }
 
+func TestADatabaseOpenedThroughDriverIsToldRecorded(t *testing.T) {
+	traced, _ := sql.Open(Driver("fakedb"), "shop")
+	plain, _ := sql.Open("fakedb", "shop")
+	t.Cleanup(func() { _ = traced.Close(); _ = plain.Close() })
+
+	if !recorded(traced) || recorded(plain) {
+		t.Fatalf("recorded: through Driver %v, plain %v", recorded(traced), recorded(plain))
+	}
+}
+
 func TestTheMiddlewareOfATracepanelThatIsOffIsTheHandler(t *testing.T) {
 	t.Setenv("TRACEPANEL_ENABLED", "0")
 	handler := http.NotFoundHandler()

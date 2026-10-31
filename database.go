@@ -23,7 +23,7 @@ import (
 // request: db.QueryContext(ctx, ...), not db.Query(...).
 
 // Driver is the name of the driver `name` with its statements recorded, for sql.Open (and sqlx.Open, GORM's
-// DriverName, anything that opens by a driver's name):
+// DriverName, anything that opens by a driver's name; for GORM, this or gormtrace.Plugin, not both):
 //
 //	db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
 //
@@ -176,6 +176,24 @@ func systemOf(name string) string {
 		}
 	}
 	return ""
+}
+
+// recorded tells whether sqlDB's statements are recorded: its connections are this package's, as a connection the
+// pool has (or opens) tells.
+func recorded(sqlDB *sql.DB) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Close() }()
+	ours := false
+	_ = conn.Raw(func(driverConn any) error {
+		_, ours = driverConn.(*tracedConn)
+		return nil
+	})
+	return ours
 }
 
 func driverPackage(d driver.Driver) string {

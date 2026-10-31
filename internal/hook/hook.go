@@ -71,10 +71,16 @@ type Record struct {
 var (
 	// Enabled tells whether Tracepanel is on.
 	Enabled func() bool
+	// Records tells whether what an app wraps is to be recorded: Tracepanel is on, or will be once set up (what
+	// tracepanel.Driver asks).
+	Records func() bool
 	// Traced tells whether ctx has a trace being recorded.
 	Traced func(ctx context.Context) bool
 	// Begin opens a span in the trace in ctx, under the span new work of ctx goes under: nil outside a trace.
 	Begin func(ctx context.Context, kind, name string, attrs map[string]any) Span
+	// Done records a span that began at start and ends now, in the trace in ctx: under `under` when it is set and of
+	// that trace, else under the span new work of ctx goes under. Nothing outside a trace.
+	Done func(ctx context.Context, under Span, kind, name string, attrs map[string]any, start time.Time, failed bool)
 	// Start begins a trace of its own: nil when Tracepanel is off.
 	Start func(kind, rootKind, name string, attrs map[string]any) Trace
 	// SetTrace sets an attribute of the trace in ctx.
@@ -92,6 +98,12 @@ var (
 	Database func(options []any) DB
 	// Statement is a SQL statement's span name and attributes, as tracepanel.Driver records them; `client` names the library.
 	Statement func(db DB, client, query string, params []any) (string, map[string]any)
+	// System is a database's kind from its driver's or dialect's name, as OpenTelemetry names it ("postgres" is
+	// "postgresql"): "" when the name doesn't tell.
+	System func(name string) string
+	// Recorded tells whether sqlDB's statements are recorded already: it was opened through tracepanel.Driver or
+	// WrapConnector.
+	Recorded func(sqlDB *sql.DB) bool
 	// Explain lets the console run EXPLAIN on db's queries through sqlDB.
 	Explain func(db DB, sqlDB *sql.DB)
 	// Log adds a record to the trace in ctx.
