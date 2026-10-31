@@ -53,6 +53,9 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   `tracepanel.Go` is profiled too, and `TRACEPANEL_PROFILE=1` (or
   `Config.Profile`) profiles every trace. Samples the profiler lost are
   counted as `dropped`. Not memory: Go's heap profile is the process's.
+- `tracepanel.Dump(ctx, values...)`, a debug print: each value with its
+  expression, as Go syntax, its type and its length on stderr, and in a
+  request's trace a dump in the call tree, secret-named values masked.
 - The console's Request tab: a request's headers, query, cookies, the
   body as far as the handler read it (16 KB; JSON and forms masked,
   binary left out) and the response's headers, secret-looking values

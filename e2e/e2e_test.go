@@ -105,12 +105,18 @@ type span struct {
 }
 
 type trace struct {
-	ID      string         `json:"id"`
-	Kind    string         `json:"kind"`
-	Name    string         `json:"name"`
-	Status  string         `json:"status"`
-	Attrs   map[string]any `json:"attrs"`
-	Spans   []span         `json:"spans"`
+	ID     string         `json:"id"`
+	Kind   string         `json:"kind"`
+	Name   string         `json:"name"`
+	Status string         `json:"status"`
+	Attrs  map[string]any `json:"attrs"`
+	Spans  []span         `json:"spans"`
+	Logs   []struct {
+		Level   string         `json:"level"`
+		Logger  string         `json:"logger"`
+		Message string         `json:"message"`
+		Attrs   map[string]any `json:"attrs"`
+	} `json:"logs"`
 	Profile *struct {
 		IntervalUs int `json:"interval_us"`
 		Samples    int `json:"samples"`
@@ -172,6 +178,8 @@ func authors(db *sql.DB) http.HandlerFunc {
 			ids = append(ids, id)
 		}
 		_ = rows.Close()
+		// A debug print, in the trace too.
+		tracepanel.Dump(ctx, ids)
 		var page strings.Builder
 		page.WriteString("<html><head><title>Authors</title></head><body>")
 		for _, id := range ids {
@@ -265,6 +273,13 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	}
 	if strings.Join(queries, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("SQL spans:\n%s", strings.Join(queries, "\n"))
+	}
+	// The dump, as the agent keeps it.
+	if len(stored.Logs) != 1 || stored.Logs[0].Level != "debug" || stored.Logs[0].Logger != "tracepanel" ||
+		stored.Logs[0].Attrs["log.kind"] != "dump" || stored.Logs[0].Attrs["dump.lang"] != "go" ||
+		fmt.Sprint(stored.Logs[0].Attrs["dump.args"]) != "[map[expr:ids len:5 repr:[]int{1, 2, 3, 4, 5} type:[]int]]" ||
+		!strings.Contains(stored.Logs[0].Message, "\n    ids: []int{1, 2, 3, 4, 5} ([]int) len=5") {
+		t.Fatalf("logs %+v", stored.Logs)
 	}
 	nPlusOne := false
 	for _, found := range found.Issues {

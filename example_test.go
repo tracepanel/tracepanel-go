@@ -111,3 +111,11 @@ func ExampleSpan() {
 		slog.InfoContext(ctx, "rendered")
 	})
 }
+
+// A debug print: the values with their expressions on stderr, and in the request's trace.
+func ExampleDump() {
+	http.HandleFunc("GET /cart", func(w http.ResponseWriter, r *http.Request) {
+		cart := map[string]int{"tea": 2}
+		tracepanel.Dump(r.Context(), cart)
+	})
+}

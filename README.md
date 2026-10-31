@@ -349,6 +349,29 @@ A program without an HTTP server (a worker, a command line tool) calls
 `tracepanel.Setup()` first, and `tracepanel.Flush(time.Second)` before it
 exits, so its traces reach the agent.
 
+## Dumps
+
+`tracepanel.Dump` is a debug print: each value with the expression that
+gave it, as Go syntax, its type and its length, on stderr. In a request,
+the dump is in its trace too, in the call tree where it ran.
+
+```go
+tracepanel.Dump(ctx, order, user.Roles)
+```
+
+```text
+handlers.go:42 checkout
+    order: &main.Order{
+        ID:    7,
+        Items: []main.Item{},
+    } (*main.Order)
+    user.Roles: []string{"admin"} ([]string) len=1
+```
+
+It prints in every build, recorded or not. A value whose expression names a
+secret (`password`, `token`, `apiKey`) is masked, and a long one is cut at
+16 KB.
+
 ## Settings
 
 `tracepanel.WrapHandler(mux, tracepanel.Config{...})` and
