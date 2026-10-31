@@ -549,8 +549,9 @@ func (c *tracedConn) begin(ctx context.Context, query string, args []driver.Name
 	encoded, _ := json.Marshal(params)
 	digest := sha1.Sum(encoded)
 	attrs := c.db.attrs()
-	attrs["db.statement"] = statementText(query)
-	attrs["db.fingerprint"] = fingerprint(query)
+	parsed := parse(query)
+	attrs["db.statement"] = parsed.text
+	attrs["db.fingerprint"] = parsed.fingerprint
 	attrs["db.params"] = params
 	attrs["db.params_hash"] = nil
 	if len(params) > 0 {
@@ -559,7 +560,7 @@ func (c *tracedConn) begin(ctx context.Context, query string, args []driver.Name
 	attrs["db.many"] = false
 	attrs["code.origin"] = nilIfEmpty(origin())
 	attrs["code.template"] = nil
-	return statement{rec: s.rec, parent: c.parent(s), name: spanName(query), attrs: attrs, start: time.Now()}
+	return statement{rec: s.rec, parent: c.parent(s), name: parsed.name, attrs: attrs, start: time.Now()}
 }
 
 // end records the statement as it ran; a query's rows are counted as they are read.
