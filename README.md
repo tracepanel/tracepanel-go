@@ -70,7 +70,8 @@ binary against the SHA-512 the SDK was released with, and keeps it in
 the user's cache for every project, where it is checked again the first
 time a process runs it: `TRACEPANEL_CACHE_DIR`, else
 `%LOCALAPPDATA%\tracepanel\` on Windows, else
-`$XDG_CACHE_HOME/tracepanel/`, else `~/.cache/tracepanel/` (macOS too).
+`$XDG_CACHE_HOME/tracepanel/`, else `~/.cache/tracepanel/` (macOS too),
+else the OS temp directory's `tracepanel/` when there is no home directory.
 Behind a proxy, set `HTTPS_PROXY`; with an npm mirror,
 `TRACEPANEL_NPM_REGISTRY` (or npm's own `npm_config_registry`).
 `TRACEPANEL_AGENT_BIN` names another agent, and without a network the SDK
@@ -164,7 +165,10 @@ ctx = tracepanel.Profile(ctx)
 A profiled trace says why in `profile.reason`: `header` (a request's
 `X-Tracepanel-Profile`), `cookie` (the panel's toggle), `parent` (a
 profiled caller asked: a traced call or message, or a task it started),
-`setting` or `code`.
+`setting` or `code`. When `TRACEPANEL_PROFILE=1` would profile the trace
+anyway, the reason is `setting`, whatever asked too. Otherwise it is the
+first ask that profiled the trace, and a later one (`tracepanel.Profile` in
+a trace its request's header profiled) doesn't change it.
 
 Go's profiler samples 100 times a second of CPU time: a request that takes
 less than 10 ms of CPU may have no sample, and time spent waiting (for the
@@ -451,7 +455,7 @@ comes from the environment:
 | | `TRACEPANEL_CAPTURE_REQUEST` | on; `0` keeps no headers, query, cookies or body |
 | | `TRACEPANEL_AGENT_BIN` | the one the SDK downloads |
 | | `TRACEPANEL_AGENT` | `auto`; an agent elsewhere (`tcp:host:port`), never started; `off` starts none |
-| | `TRACEPANEL_CACHE_DIR` | `%LOCALAPPDATA%\tracepanel` on Windows, else `$XDG_CACHE_HOME/tracepanel` or `~/.cache/tracepanel`, where the downloaded agent is kept |
+| | `TRACEPANEL_CACHE_DIR` | `%LOCALAPPDATA%\tracepanel` on Windows, else `$XDG_CACHE_HOME/tracepanel` or `~/.cache/tracepanel`, else the OS temp directory's `tracepanel` when there is no home directory, where the downloaded agent is kept |
 | | `TRACEPANEL_NPM_REGISTRY` | npm's registry, where the agent is downloaded from |
 | | `TRACEPANEL_N_PLUS_ONE_THRESHOLD` | `3`, repeats that make an N+1 |
 | | `TRACEPANEL_N_PLUS_ONE_MIN_MS` | `5`, the time repeated cache calls must cost together |
