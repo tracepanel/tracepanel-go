@@ -128,6 +128,13 @@ type trace struct {
 			Frames []int `json:"frames"`
 			Count  int   `json:"count"`
 		} `json:"stacks"`
+		Memory *struct {
+			Allocated int  `json:"allocated"`
+			Shared    bool `json:"shared"`
+		} `json:"memory"`
+		GC *struct {
+			Collections int `json:"collections"`
+		} `json:"gc"`
 	} `json:"profile"`
 }
 
@@ -311,7 +318,8 @@ func profiledReport(t *testing.T, server *httptest.Server, console string) {
 		strings.NewReader(`{"month": 10, "password": "hunter2"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer s3cr3t")
-	request.AddCookie(&http.Cookie{Name: "tracepanel_profile", Value: "1"})
+	// The panel's Profile → Memory.
+	request.AddCookie(&http.Cookie{Name: "tracepanel_profile", Value: "memory"})
 	response, err := http.DefaultTransport.RoundTrip(request)
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +337,8 @@ func profiledReport(t *testing.T, server *httptest.Server, console string) {
 		"url.query":                              "month=10&token=********",
 		"http.request.header.authorization":      "********",
 		"http.request.header.content_type":       "application/json",
-		"http.request.cookie.tracepanel_profile": "1",
+		"http.request.cookie.tracepanel_profile": "memory",
+		"profile.reason":                         "cookie",
 		"http.request.body":                      `{"month":10,"password":"********"}`,
 		"http.response.header.content_type":      "text/plain; charset=utf-8",
 	} {
@@ -339,7 +348,8 @@ func profiledReport(t *testing.T, server *httptest.Server, console string) {
 	}
 	// Its profile: where its CPU time went, the app's function in it.
 	profile := found.Profile
-	if profile == nil || profile.IntervalUs != 10_000 || profile.Samples == 0 || len(profile.Stacks) == 0 {
+	if profile == nil || profile.IntervalUs != 10_000 || profile.Samples == 0 || len(profile.Stacks) == 0 ||
+		profile.Memory == nil || profile.Memory.Allocated == 0 || profile.GC == nil {
 		t.Fatalf("profile %+v", profile)
 	}
 	inApp := false
