@@ -242,3 +242,45 @@ func TestAnUnreadableSourceLeavesTheExpressionsOut(t *testing.T) {
 		t.Errorf("dump.args: %v", doc.Logs[0].Attrs["dump.args"])
 	}
 }
+
+type dumpLogin struct {
+	User     string
+	Password string
+	APIKey   []byte
+	Profile  map[string]any
+}
+
+func TestAValueUnderASecretsNameInsideAnotherIsMasked(t *testing.T) {
+	recorded := record(t)
+	out := printed(t)
+	login := dumpLogin{
+		User: "ann", Password: "hunter2", APIKey: []byte("k-123"),
+		Profile: map[string]any{"theme": "dark", "session_id": "abc", "nested": map[any]any{"token": 7, 1: "one"}},
+	}
+
+	_ = Command(context.Background(), "job", func(ctx context.Context) error {
+		Dump(ctx, login)
+		return nil
+	})
+	doc := recorded.wait(t, 1)[0]
+
+	want := "tracepanel.dumpLogin{\n" +
+		"    User:     \"ann\",\n" +
+		"    Password: ********,\n" +
+		"    APIKey:   ********,\n" +
+		"    Profile:  map[string]interface {}{\n" +
+		"        \"nested\": map[interface {}]interface {}{1: \"one\", \"token\": ********},\n" +
+		"        \"session_id\": ********,\n" +
+		"        \"theme\": \"dark\",\n" +
+		"    },\n" +
+		"}"
+	args := doc.Logs[0].Attrs["dump.args"].([]any)
+	if repr := args[0].(dumpEntry).Repr; repr != want {
+		t.Errorf("repr:\n%s\nwant:\n%s", repr, want)
+	}
+	// The printed line is the masked text too.
+	if printed := out.String(); strings.Contains(printed, "hunter2") || strings.Contains(printed, "k-123") ||
+		strings.Contains(printed, "abc") || !strings.Contains(printed, "login: tracepanel.dumpLogin{\n        User:     \"ann\",\n        Password: ********,") {
+		t.Errorf("printed: %q", printed)
+	}
+}

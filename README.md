@@ -400,7 +400,9 @@ handlers.go:42 checkout
 ```
 
 It prints in every build, recorded or not. A value whose expression names a
-secret (`password`, `token`, `apiKey`) is masked, and a long one is cut at
+secret (`password`, `token`, `apiKey`) is masked, and so is a value inside
+one under such a name: a struct's field (`Password`, `APIKey`) or a map's
+key (`"session_id"`), printed and recorded alike. A long value is cut at
 16 KB.
 
 ## Settings

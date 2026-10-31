@@ -68,7 +68,8 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   another trace ran meanwhile, without allocation sites.
 - `tracepanel.Dump(ctx, values...)`, a debug print: each value with its
   expression, as Go syntax, its type and its length on stderr, and in a
-  request's trace a dump in the call tree, secret-named values masked.
+  request's trace a dump in the call tree, secret-named values masked,
+  inside a value too: a struct's field or a map's key named as a secret.
 - The console's Request tab: a request's headers, query, cookies, the
   body as far as the handler read it (16 KB; JSON and forms masked,
   binary left out) and the response's headers, secret-looking values
