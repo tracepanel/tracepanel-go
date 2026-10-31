@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -28,9 +27,10 @@ import (
 //
 //	db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
 //
-// The first call registers it with database/sql, as "tracepanel:pgx". With TRACEPANEL_ENABLED=0, it is `name`.
+// The first call registers it with database/sql, as "tracepanel:pgx". When Tracepanel is off (outside development),
+// it is `name`.
 func WrapDriver(name string, options ...DBOption) string {
-	if off(os.Getenv("TRACEPANEL_ENABLED")) {
+	if !records() {
 		return name
 	}
 	db := newDatabase(options)
@@ -70,9 +70,9 @@ func taken(name string) bool {
 //
 //	db := sql.OpenDB(tracepanel.WrapConnector(stdlib.GetConnector(*config)))
 //
-// With TRACEPANEL_ENABLED=0, it is `connector`.
+// When Tracepanel is off (outside development), it is `connector`.
 func WrapConnector(connector driver.Connector, options ...DBOption) driver.Connector {
-	if off(os.Getenv("TRACEPANEL_ENABLED")) {
+	if !records() {
 		return connector
 	}
 	return traced(connector, newDatabase(options))

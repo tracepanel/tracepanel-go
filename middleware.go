@@ -21,7 +21,7 @@ import (
 // It turns Tracepanel on (Setup), and traces every request: its handler on a ServeMux is a `view` span named after
 // its function, and the response gets what the badge reads, its headers (Tracepanel-Id, Server-Timing) and, in an
 // HTML page, the badge itself. A page is held until the handler returns; any other response goes out as it is
-// written. With TRACEPANEL_ENABLED=0, it returns the handler as it is.
+// written. When Tracepanel is off (outside development), it returns the handler as it is.
 func WrapHandler(handler http.Handler, config ...Config) http.Handler {
 	t := setup(config...)
 	if t == nil {
@@ -34,7 +34,7 @@ func WrapHandler(handler http.Handler, config ...Config) http.Handler {
 //
 //	r.Use(tracepanel.Middleware)
 //
-// Setup, called before it, gives it a Config. With TRACEPANEL_ENABLED=0, it returns the handler as it is.
+// Setup, called before it, gives it a Config. When Tracepanel is off, it returns the handler as it is.
 func Middleware(next http.Handler) http.Handler {
 	return WrapHandler(next)
 }

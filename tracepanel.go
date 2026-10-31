@@ -6,7 +6,9 @@
 //	db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
 //	http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 //
-// It has no dependencies, and records nothing until WrapHandler or Setup turns it on. The agent comes with it: the
+// It has no dependencies, and records nothing until WrapHandler or Setup turns it on, in development only: under
+// `go run`, with TRACEPANEL_ENABLED=1 or Config.Enabled; a binary `go build` wrote records nothing, and
+// TRACEPANEL_ENABLED=0 always wins. The agent comes with it: the
 // first trace starts the one the SDK downloads (once, into the user's cache). Its MCP server, for AI coding agents,
 // runs with
 //
@@ -45,6 +47,9 @@ type Config struct {
 	MaxTraces int
 	// The route of a request, for a router that doesn't set Request.Pattern as ServeMux does: "/books/{id}".
 	Route func(*http.Request) string
+	// Record in this build, not only under `go run` or with TRACEPANEL_ENABLED=1: a staging build, say. Set up
+	// before WrapDriver, so the database is recorded too. TRACEPANEL_ENABLED=0 still turns Tracepanel off.
+	Enabled bool
 	// Profile every trace (where its CPU time went, a flame graph in the console), not only a request that asks
 	// with the panel's Profile toggle: TRACEPANEL_PROFILE=1. TRACEPANEL_PROFILE_ENABLED=0 profiles nothing.
 	Profile bool
@@ -73,7 +78,8 @@ var (
 
 // Setup turns Tracepanel on for the process, once: the standard slog logger's records and the default HTTP
 // client's calls join the traces. WrapHandler and Middleware call it. A program without an HTTP server (a worker, a
-// command) calls it itself, and Flush before it exits. TRACEPANEL_ENABLED=0 leaves Tracepanel off.
+// command) calls it itself, and Flush before it exits. It turns Tracepanel on in development only: under `go run`,
+// with TRACEPANEL_ENABLED=1 or with Config.Enabled; TRACEPANEL_ENABLED=0 leaves it off whatever else says.
 func Setup(config ...Config) {
 	setup(config...)
 }
@@ -85,12 +91,12 @@ func setup(config ...Config) *tracepanel {
 	if t := active.Load(); t != nil {
 		return t
 	}
-	if off(os.Getenv("TRACEPANEL_ENABLED")) {
-		return nil
-	}
 	var settings Config
 	if len(config) > 0 {
 		settings = config[0]
+	}
+	if !wanted(settings) {
+		return nil
 	}
 	t := newTracepanel(withDefaults(settings))
 	active.Store(t)

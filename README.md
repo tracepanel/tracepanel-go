@@ -28,9 +28,22 @@ db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
 http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 ```
 
-Run the app as you do (`go run .`). The first request starts the agent for
-the project, and the response tells you where its console is: the badge on
-an HTML page opens it, and `Tracepanel-Url` names it.
+Run the app with `go run .`. The first request starts the agent for the
+project, and the response tells you where its console is: the badge on an
+HTML page opens it, and `Tracepanel-Url` names it.
+
+Tracepanel records in development only, as every Tracepanel SDK does:
+when the app runs under `go run`, with `TRACEPANEL_ENABLED=1`, or with
+`Config.Enabled`. A binary built with `go build` (your production build,
+a container's) records nothing: `WrapHandler`, `WrapDriver` and the rest
+hand back what they were given, and no agent is downloaded or started.
+`TRACEPANEL_ENABLED=0` turns it off whatever else says. To record a built
+binary, run it through the SDK's command, which sets
+`TRACEPANEL_ENABLED=1` for it:
+
+```bash
+go run github.com/tracepanel/tracepanel-go/cmd/tracepanel run ./shop
+```
 
 The agent is a program of its own, which keeps the traces and finds the
 issues. You don't install it: the SDK downloads its own version of it the
@@ -305,11 +318,12 @@ exits, so its traces reach the agent.
 ## Settings
 
 `tracepanel.WrapHandler(mux, tracepanel.Config{...})` and
-`tracepanel.Setup(...)` take a `Config`. What it leaves empty comes from the environment:
+`tracepanel.Setup(...)` take a `Config`; with `Enabled`, call `Setup` before
+`WrapDriver`, so the database is recorded too. What it leaves empty comes from the environment:
 
 | Field | Variable | Default |
 | --- | --- | --- |
-| | `TRACEPANEL_ENABLED` | on; `0` turns Tracepanel off |
+| `Enabled` | `TRACEPANEL_ENABLED` | on under `go run`, off in a built binary; `1` records in any build, `0` never |
 | `Service` | `TRACEPANEL_SERVICE` | the executable's name |
 | `StoreDir` | `TRACEPANEL_DIR` | `.tracepanel`, the project's store |
 | `ConsoleURL` | `TRACEPANEL_CONSOLE_URL` | where the project's agent serves it |
@@ -353,8 +367,10 @@ claude mcp add --scope project tracepanel -- go run github.com/tracepanel/tracep
 ```
 
 The same command runs the agent's console in the foreground
-(`tracepanel dev --port 8765`) and the agent with its own arguments
-(`tracepanel agent --help`). `go install
+(`tracepanel dev --port 8765`, and `tracepanel dev -- ./shop` with the
+app beside it, recording), a built app recording (`tracepanel run
+./shop`) and the agent with its own arguments (`tracepanel agent
+--help`). `go install
 github.com/tracepanel/tracepanel-go/cmd/tracepanel@latest` puts it on the
 `PATH`.
 

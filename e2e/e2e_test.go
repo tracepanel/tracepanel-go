@@ -192,6 +192,8 @@ func authors(db *sql.DB) http.HandlerFunc {
 func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".tracepanel")
 	console := agent(t, dir)
+	// A test binary is no development run: Tracepanel records when told to.
+	t.Setenv("TRACEPANEL_ENABLED", "1")
 	t.Setenv("TRACEPANEL_DIR", dir)
 	t.Setenv("TRACEPANEL_AGENT", "")
 	t.Setenv("TRACEPANEL_SERVICE", "e2e-shop")

@@ -5,10 +5,15 @@
 //
 // Its commands:
 //
-//	mcp [--values]       an MCP server for AI coding agents, on stdin and stdout, on the project's traces
-//	dev [--port 8765]    the agent in the foreground, with the console on http://127.0.0.1:8765/
-//	agent [ARGS...]      the agent itself, with its own arguments (agent --help lists them)
-//	version              this SDK's version and the agent's
+//	run COMMAND...                    the app, recording: TRACEPANEL_ENABLED=1 for it (go run records anyway)
+//	dev [--port 8765] [-- COMMAND...] the agent in the foreground, with the console on http://127.0.0.1:8765/,
+//	                                  and the app with TRACEPANEL_ENABLED=1 when a command follows --
+//	mcp [--values]                    an MCP server for AI coding agents, on stdin and stdout, on the project's traces
+//	agent [ARGS...]                   the agent itself, with its own arguments (agent --help lists them)
+//	version                           this SDK's version and the agent's
+//
+// The SDK records in development only: under `go run`, or with TRACEPANEL_ENABLED=1, which `run` and `dev --` set
+// for a binary `go build` wrote.
 //
 // The project's traces are in TRACEPANEL_DIR, else .tracepanel, as the SDK keeps them. TRACEPANEL_AGENT_BIN runs
 // another build of the agent.
@@ -28,10 +33,12 @@ import (
 )
 
 const usage = `usage: tracepanel <command>
-  mcp [--values]       an MCP server for AI coding agents, on stdin and stdout
-  dev [--port 8765]    the agent in the foreground, with the console on http://127.0.0.1:8765/
-  agent [ARGS...]      the agent itself, with its own arguments (agent --help lists them)
-  version              this SDK's version and the agent's`
+  run COMMAND...                     the app, recording (TRACEPANEL_ENABLED=1)
+  dev [--port 8765] [-- COMMAND...]  the agent in the foreground, with the console on http://127.0.0.1:8765/,
+                                     and the app, recording, when a command follows --
+  mcp [--values]                     an MCP server for AI coding agents, on stdin and stdout
+  agent [ARGS...]                    the agent itself, with its own arguments (agent --help lists them)
+  version                            this SDK's version and the agent's`
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -54,10 +61,31 @@ func run(args []string) int {
 			agentArgs = append(agentArgs, "--values")
 		}
 		return agent(agentArgs)
+	case "run":
+		if len(rest) == 0 {
+			fmt.Fprintln(os.Stderr, usage)
+			return 2
+		}
+		return foreground(app(rest))
 	case "dev":
+		var command []string
+		if at := slices.Index(rest, "--"); at >= 0 {
+			rest, command = rest[:at], rest[at+1:]
+		}
 		port := "8765"
 		if at := slices.Index(rest, "--port"); at >= 0 && at+1 < len(rest) {
 			port = rest[at+1]
+		}
+		if len(command) > 0 {
+			// The app beside the console, until the console stops.
+			cmd := app(command)
+			cmd.Stdin = nil
+			if err := cmd.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "tracepanel: %v\n", err)
+				return 1
+			}
+			go func() { _ = cmd.Wait() }()
+			defer func() { _ = cmd.Process.Kill() }()
 		}
 		return agent([]string{"--dir", dir, "--serve", "127.0.0.1:" + port})
 	case "agent":
@@ -73,6 +101,14 @@ func run(args []string) int {
 	return 2
 }
 
+// app is the app's command, recording: TRACEPANEL_ENABLED=1, whatever built it.
+func app(command []string) *exec.Cmd {
+	cmd := exec.Command(command[0], command[1:]...)
+	cmd.Env = append(os.Environ(), "TRACEPANEL_ENABLED=1")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd
+}
+
 // agent runs the agent with args, its input and output this command's, and exits as it exits.
 func agent(args []string) int {
 	binary := agentbin.Path()
@@ -82,7 +118,11 @@ func agent(args []string) int {
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	// Ctrl-C reaches the agent too, which stops on its own: this command waits for it. A SIGTERM is passed on.
+	return foreground(cmd)
+}
+
+// foreground runs cmd and exits as it exits: Ctrl-C reaches it (it stops on its own) and a SIGTERM is passed on.
+func foreground(cmd *exec.Cmd) int {
 	signal.Ignore(os.Interrupt)
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "tracepanel: %v\n", err)

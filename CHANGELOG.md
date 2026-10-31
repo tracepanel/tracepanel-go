@@ -6,6 +6,11 @@ Downloads `tracepanel-agent` 0.10.0 the first time. The first release of
 Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
 `v0.10.0`, as Go modules name their versions.
 
+Records only in development, as the other SDKs do: under `go run`, with
+`TRACEPANEL_ENABLED=1` or with `Config.Enabled`. A binary `go build`
+wrote records nothing, and its `WrapHandler`, `WrapDriver` and the rest
+hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
+
 ### Added
 
 - `tracepanel.WrapHandler(mux)`, or `tracepanel.Middleware` for another
@@ -87,8 +92,9 @@ Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
   (gosnowflake's is `snowflake`, BigQuery's, Databricks', Redshift's
   too), else by `tracepanel.DBSystem`.
 - `go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp`: the
-  agent's MCP server for AI coding agents, and `dev` for its console in
-  the foreground.
+  agent's MCP server for AI coding agents, `dev` for its console in the
+  foreground (`dev -- ./shop` with the app beside it), and `run ./shop`
+  for a built binary, recording.
 - The agent downloaded the first time from its npm platform package (or
   `TRACEPANEL_NPM_REGISTRY`, a mirror), checked against the SHA-512 of its
   binary the SDK was released with, and kept in the user's cache, where

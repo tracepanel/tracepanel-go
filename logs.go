@@ -18,6 +18,9 @@ import (
 // A record keeps its level, its message, the line that logged it, and each attribute as an extra field
 // (extra.name, a group's extra.group.name), a secret-looking one masked.
 func WrapLogHandler(next slog.Handler) slog.Handler {
+	if !records() {
+		return next
+	}
 	if _, ok := next.(*logHandler); ok {
 		return next
 	}

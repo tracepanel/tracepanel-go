@@ -21,6 +21,9 @@ func WrapTransport(base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
 	}
+	if !records() {
+		return base
+	}
 	if _, ok := base.(*transport); ok {
 		return base
 	}

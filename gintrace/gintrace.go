@@ -24,7 +24,8 @@ import (
 type contextKey struct{}
 
 // Middleware traces each request. It turns Tracepanel on (tracepanel.Setup, which takes a Config when called
-// before it). With TRACEPANEL_ENABLED=0, it only calls the next handler.
+// before it). When Tracepanel is off (outside development),
+// it only calls the next handler.
 func Middleware() gin.HandlerFunc {
 	traced := tracepanel.Middleware(http.HandlerFunc(serve))
 	return func(c *gin.Context) {
