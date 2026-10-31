@@ -4,23 +4,23 @@ package agentbin
 
 // Version is the agent these checksums are of, the one the SDK downloads: AgentVersion once go generate ran
 // for it.
-const Version = "0.9.4"
+const Version = "0.9.5"
 
 // checksums are the SHA-512 of each platform's agent binary, which a download (and the cached copy) must match.
 var checksums = map[string]string{
-	"darwin-arm64":      "sha512-UGQ5+bfS7m71v46w4hY21+8KH7IzHg3SSueLAG9IoqETR1rIHIQDbam5i9gk3mIQRc7TOKRHM8qKkOnFIU+JZA==",
-	"darwin-x64":        "sha512-T4TWr/pt941kUFRygTd9epajeE8s7Cz4Yu0vSDzwMWK+bRhAx8rMnv70khg0IWMn2a6hOGDGz0urQxgjBQM/5w==",
-	"linux-x64-gnu":     "sha512-RDGqHT+Wsg3kX+yiBKHhD05gCWZ1qrvgJneweBkixIk9g7/b9O503iWSDys15C8TItT69PKH/FN0ARZRNpdN/A==",
-	"linux-arm64-gnu":   "sha512-Omjk5qLXXj+JtV9ZjLj4F88p8815NeZyy/T1JYmKRlF1Y9BpWpuF9gNLkXIRmH7HmBQDgZw9kRK5s4j5/U5SOA==",
-	"linux-ia32-gnu":    "sha512-Te0qSO5/KYJkOka5ZmiAi5OibUuxm514ViVQboYvDd36uhUnaKf2uq/80+I6n60H/7r+nb++upH5GcCbMO9vZQ==",
-	"linux-ppc64-gnu":   "sha512-tKgGNpEhL3XsxDY3Se/AVjlCD71+DclqCfkgzk2pj9wVAUpoSaeC5w+TaT2vS7ve2GKJBSLjLwUgDiC1ka44zQ==",
-	"linux-s390x-gnu":   "sha512-stbXz2vYTH14apH0PRsOPs15iKrdY/+U6DJHg9SHF5gsF06KSwkANeBhRtFkikuAdiCA/7AcZsGCwp1YvurT8Q==",
-	"linux-riscv64-gnu": "sha512-SMjD5eUFptw5IiIxFZH7sw8FqUCroWIVpXPjrT2HxrwzT2aVNegeWJgPUXgFKLNqxaou2+CGijN2yDZi1GKzHw==",
-	"linux-x64-musl":    "sha512-0+Ay7VJVNaYtBFOS9rI2OZcO47nxZe5CMoCJ9t/JvczS0yrFYQIQe0tEol8gno93+uQNgRqN0X9n9tRDg6dBxw==",
-	"linux-arm64-musl":  "sha512-gYMAbs/UVLIyAHTRb9g1rOcam5DgWlHWPsLDRnnAojRhxouXPKw1r+dqGpsapzsqqOhQO4J3OPFYi9FdCjFPWg==",
-	"linux-ia32-musl":   "sha512-KgaYdHTcc6vPA4RWyqlORIUFWaAurppthq7u0XhdwdcCSKAKyNTXsw0lzlUUlFxJc5HqJQvJeQofyQs/6GiLsA==",
-	"linux-arm":         "sha512-U8FWx8cNbj0VI40vKly7hb0Sl6LVP3J0lRGrLCBtE8qWZDTBvcSq1BYgitIPnLTKCLaKXsAix0M9BUsWlyQQGw==",
-	"win32-x64":         "sha512-BXml9E0H8dBvGkt0yXcvytZMxHzqnHpYpUFqQmbmQTaITg0Mn8QdpLE3OggyNmFppsQYXPhLWvOBTAcF8azjtw==",
-	"win32-ia32":        "sha512-tC9GL/QTWfE+XPos7QEkOsCF4TOUDeNnpl5yVkMmqnUVCsXcWv/XXLx7lTUjWRX4OzTxJLE1pZMR1c1+Ze8iXw==",
-	"win32-arm64":       "sha512-2QbTlRKbmnLGyRMcseXWN84QTBGG0PkoGAXp+ezTRSPB+ptACiFLuAtpwVnkyAONoygTfj3ONbe5Qbv8lSvsLw==",
+	"darwin-arm64":      "sha512-vV9hR7qBYaBgQrWHq91WMOvQV2AIwo58Nr0fqLSuyePLAewfPBqAgBrZEEeu9dzzyWjwbayyPtFe59zdzbcFzw==",
+	"darwin-x64":        "sha512-uByflE39VTx77HrSfr+gJ7kKkaRuVjQ1+5YSkXvMh7mZGSXfJASasVzAcPpKQ260nxQ3A8F63FeDDtKUMagJsA==",
+	"linux-x64-gnu":     "sha512-yQPe4lBE8CRk8jqvB/0p5tHPXm082D7UQCAbSBHwbv00VDwmYD5w3mGaSjmbJvuPuGlJ2y6BNVx5EyoqkXLksQ==",
+	"linux-arm64-gnu":   "sha512-qWvIGzbqdM0Wqqtta9UH8yetABRuEZDFrS6lD6FW8/7ODW51HP8DlUfWA2YsAvm78MotMgp7GXkihCm+eJcs1w==",
+	"linux-ia32-gnu":    "sha512-/YuJV0vTMewQidFUgFDPlyerNg8WsgZ0CI/AC87GUgBZPteTG70xz0LOPrI3rNL0boy6ftINI6AvC4vt2aK+1Q==",
+	"linux-ppc64-gnu":   "sha512-p9xAzU2md4Ooz0RqsaZajdsSJNtic8Imj70dov32O0SSzlKKZ0KlzIsEELtpcT5MkqAu48lcXGMpYxqzc23t4g==",
+	"linux-s390x-gnu":   "sha512-4vbSqgS3c45nvEy1F9VdmE3MT9gLLqxPuGcVqABG9kYIizm0IoOOKqhR+M3k1ab22UcNru3d9zJFFqmSWiUQOw==",
+	"linux-riscv64-gnu": "sha512-3xCoB8+2YzM/SjdMnpXhH6eit/7DC/lM3vfp+usCerTlO5m6HIni8qqn74mQitR7ErjEYuoamKhlpAnI14KX2Q==",
+	"linux-x64-musl":    "sha512-5UuCsWFeCfH/fBcNnA+3eX2iZXwq8ADJLs5/SfBmUnG6vXo+W0IYIzH9iFvoHPSZWkX/A1p0J4Ya57uNGumRTw==",
+	"linux-arm64-musl":  "sha512-BIbyRydlbPs82RjuVN5Vgv2OGNyuuXXcwrptGWDIkOAaXp8LxBUygRpQZPyyVVZjpsLhe/tSihXVhXCC1p7wqA==",
+	"linux-ia32-musl":   "sha512-PBpNzJCBiY2UkIuW6GBrf/6tGYvfx+rjbbP+OqFfk8vpqkXd9tqeSI+2JEetnYKCpHEMGPMstBamdR7Jps6Nyw==",
+	"linux-arm":         "sha512-qScasOF/BM4MDWz7SF2qcDjsIBPBxktn7VBO3N0QNwRCe+JTGZGYIj4gaMec6QxEq6aPlGUPnbd3jHDaF2jDsw==",
+	"win32-x64":         "sha512-CM4gPvPJ3wWW7aHOt8PAv1/OgkkjmxKRsKThOs8io5oPVxQ8JvWaDfMLZwN8mdFvB2v3BTnVBRTcKjJkEe8+Aw==",
+	"win32-ia32":        "sha512-9D37GEL6Kvu+sz1vf9y10YniuJkBN4SHCMROmj5sV2MwzTlfNWE5AS6+mRl92JewlCnZCu/jYW/ECu6+ofhYCg==",
+	"win32-arm64":       "sha512-Jc8Ta1Ufc9kv/GGhcVl3N/twb8UP/e4LOfNA+6Dxl9CUr2sHZ7aLHz7+tLgEp8uy3ZCIoyjU4aMvqTCXh1KmDQ==",
 }

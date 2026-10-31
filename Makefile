@@ -20,7 +20,7 @@ tidy: ## go mod tidy in every module
 e2e: ## An app against the real agent: TRACEPANEL_AGENT_BIN, a sibling build of the agent, or the one the SDK downloads
 	cd e2e && go vet ./... && go test -race -count=1 ./...
 
-integrity: ## The checksums of AgentVersion's binaries, once it is on npm (AGENT=0.9.4: of another version)
+integrity: ## The checksums of AgentVersion's binaries, once it is on npm (AGENT=0.9.5: of another version)
 	go run ./internal/integrity $(if $(AGENT),-version $(AGENT))
 
 fmt: ## Format
