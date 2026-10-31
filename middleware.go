@@ -48,6 +48,7 @@ func (t *tracepanel) middleware(next http.Handler) http.Handler {
 			attrs[key] = value
 		}
 		rec := t.begin("http", "http", r.Method+" "+r.URL.Path, attrs)
+		rec.asked = profileAsked(r)
 		req := r.WithContext(within(r.Context(), rec, rec.root.ID))
 		held := &heldResponse{w: w, header: http.Header{}, status: http.StatusOK, t: t, rec: rec}
 		func() {
@@ -72,6 +73,31 @@ func (t *tracepanel) middleware(next http.Handler) http.Handler {
 		held.finish()
 		t.finish(rec)
 	})
+}
+
+// The ask to profile a request, which the panel's Profile toggle makes (its cookie) and a call from a profiled
+// trace carries (the header): this SDK doesn't profile yet, but the calls the request makes ask the same, so the
+// apps down the chain do.
+const (
+	profileHeader = "X-Tracepanel-Profile"
+	profileCookie = "tracepanel_profile"
+)
+
+// profileAsked is what the request asks of profiling: "1", "memory", or "" for nothing.
+func profileAsked(r *http.Request) string {
+	asked := strings.TrimSpace(r.Header.Get(profileHeader))
+	if asked == "" {
+		if cookie, err := r.Cookie(profileCookie); err == nil {
+			asked = cookie.Value
+		}
+	}
+	switch asked {
+	case "1", "true":
+		return "1"
+	case "memory":
+		return "memory"
+	}
+	return ""
 }
 
 // route is the request's route: the app's Route, else the pattern ServeMux matched ("GET /books/{id}" names

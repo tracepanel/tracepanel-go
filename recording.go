@@ -49,6 +49,8 @@ type recording struct {
 	dbTime   int64
 	// The handler's span, where a panic in the request happened.
 	view string
+	// What its request asked of profiling ("1", "memory"; "" nothing): the calls it makes ask the same.
+	asked string
 }
 
 func newRecording(kind, rootKind, name string, attrs attrMap) *recording {

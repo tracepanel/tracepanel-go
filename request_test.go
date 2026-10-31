@@ -420,3 +420,45 @@ func TestAUserWithoutANameIsTheirID(t *testing.T) {
 		t.Fatalf("a username in %v", doc.Attrs)
 	}
 }
+
+// The panel's Profile toggle asks a request to be profiled: the calls it makes ask the apps they reach the same.
+func TestTheAskToProfileTravelsDownTheChain(t *testing.T) {
+	recorded := record(t)
+	var asked []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Header.Get("X-Tracepanel-Profile"))
+	}))
+	defer other.Close()
+	handler := recorded.t.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request, _ := http.NewRequestWithContext(r.Context(), "GET", other.URL, nil)
+		if response, err := (&http.Client{Transport: WrapTransport(nil)}).Do(request); err == nil {
+			response.Body.Close()
+		}
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	get := func(header, cookie string) {
+		request, _ := http.NewRequest("GET", server.URL, nil)
+		if header != "" {
+			request.Header.Set("X-Tracepanel-Profile", header)
+		}
+		if cookie != "" {
+			request.AddCookie(&http.Cookie{Name: "tracepanel_profile", Value: cookie})
+		}
+		response, err := http.DefaultTransport.RoundTrip(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+	}
+
+	get("1", "")
+	get("", "memory")
+	get("", "")
+	get("nonsense", "")
+	recorded.wait(t, 4)
+
+	if !equalJSON(asked, []string{"1", "memory", "", ""}) {
+		t.Fatalf("asked %q", asked)
+	}
+}
