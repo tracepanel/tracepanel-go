@@ -123,7 +123,7 @@ func Process(ctx context.Context, msg kafka.Message, handler func(context.Contex
 	return handler(trace.Context(ctx), msg)
 }
 
-// receive starts a received message's trace, as the other SDKs' (Java's Kafka listeners) start theirs.
+// receive starts a received message's trace, as the other SDKs start theirs.
 func receive(msg kafka.Message, name string) hook.Trace {
 	if !hook.Enabled() {
 		return nil

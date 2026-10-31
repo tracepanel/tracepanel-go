@@ -8,7 +8,8 @@ every request.
 
 This SDK records a Go app's requests and sends them to Tracepanel's agent,
 which keeps them, finds the issues and serves the console. It has no
-dependencies.
+dependencies: the integrations with gin, Echo, pgx, go-redis, zap, zerolog,
+gRPC and Kafka are modules of their own, and you get only those you use.
 
 ## Setup
 
@@ -68,8 +69,10 @@ without it isn't recorded.
 
 ### Other routers
 
-`ServeMux` names each route. Another router takes `tracepanel.Middleware`,
-and `Config.Route` returns the route, as here for chi:
+`ServeMux` names each route. gin and Echo have middleware of their own
+(see [Integrations](#integrations)). Another router takes
+`tracepanel.Middleware`, and `Config.Route` returns the route, as here for
+chi:
 
 ```go
 tracepanel.Setup(tracepanel.Config{
@@ -106,6 +109,134 @@ so the console sees a call made inside a transaction:
 tx, err := db.BeginTx(ctx, nil)
 ctx = tracepanel.TxContext(ctx, tx)
 ```
+
+## Integrations
+
+Each is a module of its own, so the core keeps no dependencies:
+
+| Library | Module | What it records |
+| --- | --- | --- |
+| gin | `github.com/tracepanel/tracepanel-go/gintrace` | requests, named by route |
+| Echo v4 | `github.com/tracepanel/tracepanel-go/echotrace` | requests, named by route |
+| Echo v5 | `github.com/tracepanel/tracepanel-go/echo5trace` | requests, named by route |
+| pgx v5 | `github.com/tracepanel/tracepanel-go/pgxtrace` | SQL and transactions |
+| go-redis v9 | `github.com/tracepanel/tracepanel-go/redistrace` | Redis commands |
+| zap | `github.com/tracepanel/tracepanel-go/zaptrace` | log records |
+| zerolog | `github.com/tracepanel/tracepanel-go/zerologtrace` | log records |
+| gRPC | `github.com/tracepanel/tracepanel-go/grpctrace` | calls served and made |
+| kafka-go | `github.com/tracepanel/tracepanel-go/kafkatrace` | messages sent and handled |
+
+```bash
+go get github.com/tracepanel/tracepanel-go/gintrace
+```
+
+Fiber runs on fasthttp, not `net/http`, and isn't supported yet.
+
+### gin
+
+```go
+router := gin.Default()
+router.Use(gintrace.Middleware())
+```
+
+Each request is named by its route (`GET /books/:id`), with its handler as
+a `view` span. Pass `c.Request.Context()` down (or `c` itself, with the
+engine's `ContextWithFallback` on).
+
+### Echo
+
+```go
+e := echo.New()
+e.Use(echotrace.Middleware())  // echo5trace.Middleware() for Echo v5
+```
+
+Each request is named by its route (`GET /books/:id`); on Echo v4 its
+handler is a `view` span. An error a handler returns is answered by Echo's
+error handler within the trace. Pass `c.Request().Context()` down.
+
+### pgx
+
+The tracer records each statement as `WrapDriver` does, on a `pgx.Conn` or
+a `pgxpool.Pool`:
+
+```go
+config, err := pgxpool.ParseConfig(dsn)
+config.ConnConfig.Tracer = pgxtrace.New()
+pool, err := pgxpool.NewWithConfig(ctx, config)
+```
+
+A transaction's statements go under it. For the rest of its work,
+`pgxtrace.TxContext(ctx, tx)` puts it there too. A batch's queries are
+recorded as they are read, and a `CopyFrom` as one statement.
+`pgxtrace.New` takes the options `WrapDriver` takes (`tracepanel.DBAlias`
+for a second database), and the console runs `EXPLAIN` on the database a
+query came from.
+
+### go-redis
+
+```go
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+redistrace.Instrument(rdb)
+```
+
+Each command is a span with its key, the database and the server, so the
+agent finds a command repeated for each item (N+1) and duplicates. A
+pipeline is one span. Cluster and ring clients work too, without the
+server.
+
+### zap and zerolog
+
+zap's loggers carry no context: `zaptrace.Context(ctx)` is a field that
+names it, on a record or on a logger, and writes nothing.
+
+```go
+logger = logger.WithOptions(zap.WrapCore(zaptrace.WrapCore))
+logger.Info("order placed", zaptrace.Context(ctx), zap.Int("order", id))
+```
+
+zerolog takes a writer and a hook, both:
+
+```go
+logger := zerolog.New(zerologtrace.Writer(os.Stdout)).Hook(zerologtrace.Hook{})
+logger.Info().Ctx(ctx).Int("order", id).Msg("order placed")
+```
+
+A record keeps its level, its message, its fields (secret-looking ones
+masked, as `slog`'s are) and the line that logged it, when the logger adds
+the caller.
+
+### gRPC
+
+```go
+server := grpc.NewServer(grpctrace.ServerOptions()...)
+options := append(grpctrace.DialOptions(), grpc.WithTransportCredentials(creds))
+conn, err := grpc.NewClient(target, options...)
+```
+
+Each call served is a trace of its own, named `Service/Method`; a server's
+fault (`Internal`, `Unavailable`, a panic) fails it. Each call made is a
+span of the trace in its context, and carries a `traceparent` in its
+metadata, so the server links its trace to it. The interceptors are there
+one by one too (`UnaryServerInterceptor`, `StreamClientInterceptor`...),
+for a chain: a recovery interceptor goes before them.
+
+### Kafka
+
+segmentio/kafka-go's writer, wrapped, records what it sends; a consumer
+hands each message to `kafkatrace.Process`:
+
+```go
+writer := kafkatrace.WrapWriter(&kafka.Writer{Addr: kafka.TCP(broker), Topic: "orders"})
+err := writer.WriteMessages(ctx, kafka.Message{Value: order})
+
+msg, err := reader.FetchMessage(ctx)
+err = kafkatrace.Process(ctx, msg, handleOrder)
+```
+
+The messages a call sends to a topic are a span (`publish orders`), and
+each carries a `traceparent`. Each message handled is a task trace of its
+own, named after its handler and linked to the trace that sent it, even
+in another app with Tracepanel.
 
 ## Your own code, tasks and commands
 
@@ -165,8 +296,12 @@ claude mcp add --scope project tracepanel -- tracepanel-agent mcp
 ## Development
 
 ```bash
-make lint    # gofmt, go vet, the tests
+make lint    # gofmt, go vet, the tests of every module
 ```
+
+Each integration is a module of its own, with a `replace` of the core to
+the checkout. A release tags the core (`v0.10.0`) and each integration at
+the same version (`gintrace/v0.10.0`).
 
 `go generate` writes `integrity.go`, the checksums of the agent's downloads,
 after `AgentVersion` changes in `version.go`. The test that starts the
