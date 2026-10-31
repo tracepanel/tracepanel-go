@@ -67,6 +67,8 @@ func agent(t *testing.T, dir string) string {
 	for {
 		select {
 		case err := <-exited:
+			// The cleanup waits for it too.
+			exited <- err
 			if strings.Contains(output.String(), "no tracepanel-agent could be had") {
 				t.Skipf("no agent to test against: set TRACEPANEL_AGENT_BIN, or let the SDK download it\n%s", output.String())
 			}
