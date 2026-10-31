@@ -88,7 +88,9 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
     `pgxtrace.TxContext` for the rest of a transaction's work.
   - `db.Use(gormtrace.Plugin())` for GORM v2: each statement of a create,
     query, update, delete or raw SQL with its parameters, the rows it
-    returned or changed and the line that ran it, each transaction
+    returned or changed (`Scan`'s too, from what GORM tells its logger;
+    not `Rows()`'s, which the app reads itself: `tracepanel.Driver`
+    counts those) and the line that ran it, each transaction
     (GORM's own around a write too), `EXPLAIN` from the console, and
     `gormtrace.TxContext` for the rest of a transaction's work. A
     database GORM opened through `tracepanel.Driver` is left to it.

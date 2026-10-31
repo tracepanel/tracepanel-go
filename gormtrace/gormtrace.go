@@ -7,6 +7,13 @@
 //
 // A statement is recorded when it runs with the context of a traced request: db.WithContext(ctx).Find(&books).
 //
+// The rows a query returned are recorded for Find, First, Pluck, Count and the rest, and for Scan (Raw(...).Scan,
+// Select(...).Scan), whose count GORM tells its logger once it has scanned them: the plugin wraps the logger
+// (gorm.Config.Logger) to read it. A Session with a Logger of its own (or Debug on it) keeps the wrapped one only
+// when it was set before db.Use. Not for Rows() and Row(): the app reads the rows itself, from a *sql.Rows (or
+// *sql.Row) that database/sql hands over and nothing can watch; tracepanel.Driver as the dialector's DriverName
+// counts them, as the driver hands each row over.
+//
 // Use the plugin or tracepanel.Driver as the dialector's DriverName, not both: a database GORM opened through
 // tracepanel.Driver (or WrapConnector) is recorded already, and the plugin leaves it to it.
 package gormtrace
@@ -20,6 +27,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	tracepanel "github.com/tracepanel/tracepanel-go"
 	"github.com/tracepanel/tracepanel-go/internal/hook"
@@ -68,6 +76,7 @@ func callbacks(db *gorm.DB) map[string][2]registrar {
 			cb.Delete().After("gorm:delete").Before("gorm:after_delete"),
 		},
 		"row": {cb.Row().Before("gorm:row"), cb.Row().After("gorm:row")},
+		// Scan runs its query as Rows(): a row callback.
 		"raw": {cb.Raw().Before("gorm:raw"), cb.Raw().After("gorm:raw")},
 	}
 }
@@ -93,7 +102,11 @@ func (p *plugin) Initialize(db *gorm.DB) error {
 		sqlDB = nil
 	}
 	for operation, places := range callbacks(db) {
-		if err := places[0].Register("tracepanel:before_"+operation, p.before); err != nil {
+		before := p.before
+		if operation == "row" {
+			before = p.beforeRows
+		}
+		if err := places[0].Register("tracepanel:before_"+operation, before); err != nil {
 			return err
 		}
 		if err := places[1].Register("tracepanel:after_"+operation, p.after(operation)); err != nil {
@@ -109,6 +122,12 @@ func (p *plugin) Initialize(db *gorm.DB) error {
 	}
 	if db.Statement != nil {
 		db.Statement.ConnPool = db.ConnPool
+	}
+	// Scan tells its logger how many rows it scanned: the logger, wrapped, gives them to the statement's span.
+	if db.Config != nil && db.Config.Logger != nil {
+		if _, wrapped := db.Config.Logger.(*rowsLogger); !wrapped {
+			db.Config.Logger = &rowsLogger{Interface: db.Config.Logger}
+		}
 	}
 	return nil
 }
@@ -129,6 +148,20 @@ func (p *plugin) before(db *gorm.DB) {
 	}
 	db.InstanceSet(startedKey, started{at: time.Now(), err: db.Error})
 }
+
+// beforeRows is before for Row(), Rows() and Scan, which runs as Rows(): the statement's context carries where its
+// span will be, for the logger that Scan tells its rows.
+func (p *plugin) beforeRows(db *gorm.DB) {
+	p.before(db)
+	if _, ok := db.InstanceGet(startedKey); ok {
+		db.Statement.Context = context.WithValue(db.Statement.Context, scannedKey{}, &scanned{})
+	}
+}
+
+// scanned is the span of a Rows() query, whose rows Scan counts later; scannedKey is where its context carries it.
+type scanned struct{ span hook.Span }
+
+type scannedKey struct{}
 
 func (p *plugin) after(operation string) func(*gorm.DB) {
 	return func(db *gorm.DB) {
@@ -157,8 +190,44 @@ func (p *plugin) after(operation string) func(*gorm.DB) {
 		if tx := transactionOf(stmt.ConnPool); tx != nil {
 			under = tx.span
 		}
-		hook.Done(stmt.Context, under, "sql", name, attrs, begun.at, failed)
+		span := hook.DoneSpan(stmt.Context, under, "sql", name, attrs, begun.at, failed)
+		if pending, ok := stmt.Context.Value(scannedKey{}).(*scanned); ok && span != nil {
+			if _, rows := stmt.Dest.(*sql.Rows); rows {
+				pending.span = span
+			}
+		}
 	}
+}
+
+// rowsLogger is the app's GORM logger, which Scan tells how many rows it scanned (as RowsAffected): they go to the
+// span of the Rows() query it ran.
+type rowsLogger struct {
+	logger.Interface
+}
+
+var _ gorm.ParamsFilter = (*rowsLogger)(nil)
+
+func (l *rowsLogger) LogMode(level logger.LogLevel) logger.Interface {
+	return &rowsLogger{Interface: l.Interface.LogMode(level)}
+}
+
+func (l *rowsLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	if pending, ok := ctx.Value(scannedKey{}).(*scanned); ok && pending.span != nil {
+		// A Rows() query GORM ran itself tells -1; Scan, once it scanned them, their number.
+		if sql, rows := fc(); rows >= 0 && sql != "" {
+			pending.span.Set("db.response.returned_rows", rows)
+			pending.span = nil
+		}
+	}
+	l.Interface.Trace(ctx, begin, fc, err)
+}
+
+// ParamsFilter is the app's logger's, if it has one: GORM asks it for the parameters a logged statement shows.
+func (l *rowsLogger) ParamsFilter(ctx context.Context, sql string, params ...any) (string, []any) {
+	if filter, ok := l.Interface.(gorm.ParamsFilter); ok {
+		return filter.ParamsFilter(ctx, sql, params...)
+	}
+	return sql, params
 }
 
 // ---------- transactions ----------

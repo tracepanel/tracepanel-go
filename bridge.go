@@ -25,16 +25,19 @@ func init() {
 		}
 		return &bridgeSpan{rec: s.rec, span: s.rec.begin(s.parent(), kind, name, attrs)}
 	}
-	hook.Done = func(ctx context.Context, under hook.Span, kind, name string, attrs map[string]any, start time.Time, failed bool) {
+	hook.DoneSpan = func(ctx context.Context, under hook.Span, kind, name string, attrs map[string]any, start time.Time, failed bool) hook.Span {
 		s := scopeOf(ctx)
 		if s == nil {
-			return
+			return nil
 		}
 		parent := s.parent()
 		if span, ok := under.(*bridgeSpan); ok && span.rec == s.rec {
 			parent = span.span.ID
 		}
-		s.rec.done(parent, newID(), kind, name, attrs, start, failed)
+		return &bridgeSpan{rec: s.rec, span: s.rec.done(parent, newID(), kind, name, attrs, start, failed)}
+	}
+	hook.Done = func(ctx context.Context, under hook.Span, kind, name string, attrs map[string]any, start time.Time, failed bool) {
+		hook.DoneSpan(ctx, under, kind, name, attrs, start, failed)
 	}
 	hook.Start = func(kind, rootKind, name string, attrs map[string]any) hook.Trace {
 		t := active.Load()

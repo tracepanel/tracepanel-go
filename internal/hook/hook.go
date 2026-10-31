@@ -84,6 +84,9 @@ var (
 	// Done records a span that began at start and ends now, in the trace in ctx: under `under` when it is set and of
 	// that trace, else under the span new work of ctx goes under. Nothing outside a trace.
 	Done func(ctx context.Context, under Span, kind, name string, attrs map[string]any, start time.Time, failed bool)
+	// DoneSpan is Done, and the span it recorded: its attributes may still be set (the rows a query returned, known
+	// later) until its trace ends. Nil outside a trace.
+	DoneSpan func(ctx context.Context, under Span, kind, name string, attrs map[string]any, start time.Time, failed bool) Span
 	// Start begins a trace of its own: nil when Tracepanel is off.
 	Start func(kind, rootKind, name string, attrs map[string]any) Trace
 	// SetTrace sets an attribute of the trace in ctx.
