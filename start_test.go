@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/tracepanel/tracepanel-go/internal/agentbin"
 )
 
 func TestConsoleURL(t *testing.T) {
@@ -46,7 +48,7 @@ func TestNoAgentToStart(t *testing.T) {
 func TestTheFirstTraceStartsTheAgent(t *testing.T) {
 	executable := os.Getenv("TRACEPANEL_AGENT_BIN")
 	if executable == "" {
-		executable = filepath.Join("..", "tracepanel", "target", "debug", agentBinary)
+		executable = filepath.Join("..", "tracepanel", "target", "debug", agentbin.Binary)
 	}
 	if _, err := os.Stat(executable); err != nil || runtime.GOOS == "windows" {
 		t.Skip("no tracepanel-agent build")
@@ -54,6 +56,8 @@ func TestTheFirstTraceStartsTheAgent(t *testing.T) {
 	absolute, _ := filepath.Abs(executable)
 	t.Setenv("TRACEPANEL_AGENT", "")
 	t.Setenv("TRACEPANEL_AGENT_BIN", absolute)
+	// Not the machine's OpenTelemetry port: another agent may have it.
+	t.Setenv("TRACEPANEL_OTLP", "off")
 	dir := filepath.Join(t.TempDir(), ".tracepanel")
 	t.Cleanup(func() { _ = exec.Command("pkill", "-TERM", "-f", "--", dir).Run(); time.Sleep(200 * time.Millisecond) })
 	s := &starter{storeDir: dir}

@@ -1,8 +1,9 @@
 name: Release
 
-# A tag that names a version (v0.3.0, as Go modules name them) releases it: once CI has passed on the tagged commit,
-# and the tag agrees with Version and with the agent's checksums, it gets a GitHub release, and the Go module proxy
-# is asked for it, so pkg.go.dev and `go get` have it at once. Nothing is uploaded: a Go module is its tag.
+# A tag that names a version (v0.10.0, as Go modules name them) releases it: once CI has passed on the tagged commit,
+# and the tag agrees with Version, AgentVersion is of its minor (a patch of its own) and the agent's checksums are of
+# AgentVersion, it gets a GitHub release, and the Go module proxy is asked for it, so pkg.go.dev and `go get` have it
+# at once. Nothing is uploaded: a Go module is its tag.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
@@ -42,12 +43,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - name: The tag is the version, and the agent's checksums are of it
+      - name: The tag is the version, the agent of its minor, and its checksums of it
         run: |
           version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' version.go)
-          integrity=$(sed -n 's/^const integrityVersion = "\(.*\)"$/\1/p' integrity.go)
-          if [ "v$version" != "$GITHUB_REF_NAME" ] || [ "$integrity" != "$version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME, Version $version, checksums of $integrity: they must agree"
+          agent=$(sed -n 's/^const AgentVersion = "\(.*\)"$/\1/p' version.go)
+          checksums=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/agentbin/integrity.go)
+          if [ "v$version" != "$GITHUB_REF_NAME" ] || [ "${agent%.*}" != "${version%.*}" ] || [ "$checksums" != "$agent" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, Version $version, AgentVersion $agent, checksums of $checksums: the tag is the version, the agent of its minor, and make integrity was run for it"
             exit 1
           fi
       - name: GitHub release, its notes from the changelog

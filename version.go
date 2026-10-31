@@ -3,8 +3,9 @@ package tracepanel
 //go:generate go run ./internal/integrity
 
 // Version is this SDK's version.
-const Version = "0.3.0"
+const Version = "0.10.0-dev"
 
-// AgentVersion is the agent this SDK runs, and downloads when it isn't installed: released with the SDKs, at the same
-// version. After changing it, `go generate` writes the checksums of its downloads into integrity.go.
-const AgentVersion = Version
+// AgentVersion is the agent this SDK runs, and downloads when it isn't installed: of the same minor as Version, a
+// patch of its own. After changing it, `go generate` (or `make integrity`) writes the checksums of its binaries,
+// which a download must match; a release checks they are of AgentVersion.
+const AgentVersion = "0.9.4"

@@ -1,25 +1,19 @@
 package tracepanel
 
 import (
-	"archive/tar"
 	"bufio"
-	"bytes"
-	"compress/gzip"
-	"crypto/sha512"
 	"database/sql"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tracepanel/tracepanel-go/internal/agentbin"
 )
 
 func readFrame(t *testing.T, reader io.Reader) []byte {
@@ -126,68 +120,6 @@ func TestAnEXPLAINOnADatabaseTheAppDoesntHaveSaysSo(t *testing.T) {
 	}
 }
 
-// package builds an npm platform package: package/bin/<executable> in a .tgz.
-func platformPackage(t *testing.T, executable string, content []byte) []byte {
-	t.Helper()
-	var buffer bytes.Buffer
-	zipped := gzip.NewWriter(&buffer)
-	archive := tar.NewWriter(zipped)
-	for name, data := range map[string][]byte{"package/package.json": []byte("{}"), "package/bin/" + executable: content} {
-		_ = archive.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(data))})
-		_, _ = archive.Write(data)
-	}
-	_ = archive.Close()
-	_ = zipped.Close()
-	return buffer.Bytes()
-}
-
-func TestTheAgentIsDownloadedOnceCheckedAgainstItsChecksum(t *testing.T) {
-	tarball := platformPackage(t, "tracepanel-agent", []byte("#!/bin/sh\necho agent\n"))
-	digest := sha512.Sum512(tarball)
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(digest[:])
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(tarball) }))
-	defer server.Close()
-	binary := filepath.Join(t.TempDir(), "agent", "0.3.0", "linux-x64-gnu", "tracepanel-agent")
-
-	err := download(server.URL+"/agent.tgz", integrity, "linux-x64-gnu", binary)
-	data, _ := os.ReadFile(binary)
-	info, _ := os.Stat(binary)
-	refused := download(server.URL+"/agent.tgz", "sha512-"+strings.Repeat("A", 86)+"==", "linux-x64-gnu", binary+"2")
-
-	// Windows has no executable bit: a file is run by its name.
-	executable := runtime.GOOS == "windows" || info != nil && info.Mode().Perm()&0o100 != 0
-	if err != nil || string(data) != "#!/bin/sh\necho agent\n" || !executable {
-		t.Fatalf("%v: %q, %v", err, data, info)
-	}
-	if refused == nil || !strings.Contains(refused.Error(), "checksum") {
-		t.Fatalf("a tampered download: %v", refused)
-	}
-	if _, err := os.Stat(binary + "2"); err == nil {
-		t.Fatal("a tampered download was kept")
-	}
-}
-
-func TestEachPlatformHasItsPackageAndItsChecksum(t *testing.T) {
-	cases := map[[3]string]string{
-		{"darwin", "arm64", ""}: "darwin-arm64", {"darwin", "amd64", ""}: "darwin-x64",
-		{"linux", "amd64", ""}: "linux-x64-gnu", {"linux", "amd64", "musl"}: "linux-x64-musl",
-		{"linux", "arm", ""}: "linux-arm", {"linux", "ppc64le", ""}: "linux-ppc64-gnu",
-		{"windows", "amd64", ""}: "win32-x64", {"freebsd", "amd64", ""}: "", {"linux", "riscv64", "musl"}: "",
-	}
-	for input, want := range cases {
-		got := agentPlatform(input[0], input[1], input[2] == "musl")
-		if got != want {
-			t.Errorf("%v: %q, want %q", input, got, want)
-		}
-		if _, known := agentIntegrity[got]; got != "" && !known {
-			t.Errorf("no checksum for %s", got)
-		}
-	}
-	if integrityVersion != AgentVersion {
-		t.Fatalf("integrity.go is of %s, the agent is %s: run go generate", integrityVersion, AgentVersion)
-	}
-}
-
 func TestW3CTraceContext(t *testing.T) {
 	rec := newRecording("http", "http", "GET /", attrMap{})
 
@@ -210,5 +142,12 @@ func TestW3CTraceContext(t *testing.T) {
 	}
 	if got := w3cSpan("01M4ZYCP0KQZZPC6SD1RJ4PBY5"); len(got) != 16 {
 		t.Fatalf("span id %q", got)
+	}
+}
+
+// The agent the SDK downloads is AgentVersion: its checksums were generated for it.
+func TestTheAgentsChecksumsAreOfAgentVersion(t *testing.T) {
+	if agentbin.Version != AgentVersion {
+		t.Fatalf("internal/agentbin/integrity.go is of %s, AgentVersion is %s: run make integrity", agentbin.Version, AgentVersion)
 	}
 }
