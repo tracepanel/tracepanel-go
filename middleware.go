@@ -19,8 +19,9 @@ import (
 //	http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 //
 // It turns Tracepanel on (Setup), and traces every request: its handler on a ServeMux is a `view` span named after
-// its function, and the response gets what the badge reads. With TRACEPANEL_ENABLED=0, it returns the handler as it
-// is.
+// its function, and the response gets what the badge reads, its headers (Tracepanel-Id, Server-Timing) and, in an
+// HTML page, the badge itself. A page is held until the handler returns; any other response goes out as it is
+// written. With TRACEPANEL_ENABLED=0, it returns the handler as it is.
 func WrapHandler(handler http.Handler, config ...Config) http.Handler {
 	t := setup(config...)
 	if t == nil {

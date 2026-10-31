@@ -139,7 +139,7 @@ func (d *tracedDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	return traced(connector, &db), nil
 }
 
-// DBOption tells Driver or WrapConnector more about the database.
+// DBOption tells WrapDriver or WrapConnector more about the database.
 type DBOption func(*database)
 
 // DBAlias names the database among the app's ("default"): a second one, such as a replica, gets a name of its own.

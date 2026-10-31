@@ -11,11 +11,12 @@ import (
 
 // WrapTransport records the calls made through `base` (http.DefaultTransport when nil):
 //
-//	client := &http.Client{WrapTransport: tracepanel.WrapTransport(nil)}
+//	client := &http.Client{Transport: tracepanel.WrapTransport(nil)}
 //
 // Setup gives it to http.DefaultClient, so its calls are recorded already. http.DefaultTransport stays as it is:
-// code asserts it is an *http.WrapTransport. A call is recorded when its request has the context of a traced request:
-// use http.NewRequestWithContext(ctx, ...).
+// code asserts it is an *http.Transport. A call is recorded when its request has the context of a traced request:
+// use http.NewRequestWithContext(ctx, ...). It carries the trace's traceparent, and X-Tracepanel-Profile when the
+// request was asked to be profiled, so the app it reaches links its trace to the call.
 func WrapTransport(base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport

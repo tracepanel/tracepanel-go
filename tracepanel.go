@@ -6,7 +6,11 @@
 //	db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
 //	http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 //
-// It has no dependencies, and records nothing until WrapHandler or Setup turns it on.
+// It has no dependencies, and records nothing until WrapHandler or Setup turns it on. The agent comes with it: the
+// first trace starts the one the SDK downloads (once, into the user's cache). Its MCP server, for AI coding agents,
+// runs with
+//
+//	go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp
 package tracepanel
 
 import (
