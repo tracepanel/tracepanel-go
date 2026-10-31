@@ -49,8 +49,12 @@ type recording struct {
 	dbTime   int64
 	// The handler's span, where a panic in the request happened.
 	view string
-	// What its request asked of profiling ("1", "memory"; "" nothing): the calls it makes ask the same.
-	asked string
+	// What its request asked of profiling ("1", "memory"; "" nothing): the calls it makes ask the same. And what
+	// asked: "header", "cookie", "parent" (the trace that started it was profiled).
+	asked  string
+	reason string
+	// tracepanel.Profile profiles it, from where it was called.
+	byCode bool
 	// Its CPU profile, while it is profiled.
 	profile *traceProfile
 }
@@ -113,6 +117,21 @@ func (r *recording) end(span *spanDoc, failed bool) {
 		r.queries++
 		r.dbTime += span.Duration
 	}
+}
+
+// askedNow is what the trace asks of profiling now: what its request asked, or "1" once tracepanel.Profile
+// profiles it.
+func (r *recording) askedNow() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.asked
+}
+
+// profiledByCode: tracepanel.Profile profiles it.
+func (r *recording) profiledByCode() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byCode
 }
 
 // isOpen tells whether a span of the trace still runs.

@@ -302,9 +302,20 @@ func (t *tracepanel) finish(rec *recording) {
 	})
 }
 
-// profiles tells whether a trace that asked for `asked` ("1", "memory", "" for nothing) is profiled.
-func (t *tracepanel) profiles(asked string) bool {
-	return t.profiler != nil && (t.profileAll || asked != "")
+// profileReason is why a trace is profiled, its root's profile.reason: what asked for it ("header", "cookie",
+// "parent"), else "setting" when every trace is; "" when it isn't profiled. tracepanel.Profile's is "code".
+func (t *tracepanel) profileReason(rec *recording) string {
+	switch {
+	case t.profiler == nil:
+		return ""
+	case rec.asked != "" && rec.reason != "":
+		return rec.reason
+	case rec.asked != "":
+		return "header"
+	case t.profileAll:
+		return "setting"
+	}
+	return ""
 }
 
 // profile starts the trace's profile when it is to be profiled: the current goroutine, and those it starts, carry
@@ -314,13 +325,50 @@ func (t *tracepanel) profile(ctx context.Context, rec *recording) (context.Conte
 		return ctx, func() {}
 	}
 	labeled := pprof.WithLabels(ctx, pprof.Labels(profileLabel, ""))
-	if t.profiles(rec.asked) {
+	if reason := t.profileReason(rec); reason != "" {
 		labeled, rec.profile = t.profiler.start(ctx, rec.doc.ID)
+		rec.set("profile.reason", reason)
 	} else if _, carried := pprof.Label(ctx, profileLabel); !carried {
-		return ctx, func() {}
+		// Unless tracepanel.Profile labels the goroutine later on: then it gets its labels back too.
+		return ctx, func() {
+			if rec.profiledByCode() {
+				pprof.SetGoroutineLabels(ctx)
+			}
+		}
 	}
 	pprof.SetGoroutineLabels(labeled)
 	return labeled, func() { pprof.SetGoroutineLabels(ctx) }
+}
+
+// Profile profiles the trace in ctx from here on, as the panel's Profile toggle profiles a request from its start:
+// where its CPU time goes from now until it ends, a flame graph in the console (profile.reason "code"). The current
+// goroutine is profiled; a goroutine the code starts for the trace is too when started with the context it returns.
+//
+//	ctx = tracepanel.Profile(ctx)
+//
+// A trace profiled already (asked for, or TRACEPANEL_PROFILE=1) stays as it is; outside a trace, or with profiling
+// off (TRACEPANEL_PROFILE_ENABLED=0), it returns ctx.
+func Profile(ctx context.Context) context.Context {
+	t, s := active.Load(), scopeOf(ctx)
+	if t == nil || t.profiler == nil || s == nil {
+		return ctx
+	}
+	rec := s.rec
+	rec.mu.Lock()
+	if rec.finished || rec.profile != nil {
+		rec.mu.Unlock()
+		return ctx
+	}
+	labeled, tp := t.profiler.start(ctx, rec.doc.ID)
+	rec.profile, rec.byCode = tp, true
+	rec.doc.Attrs["profile.reason"] = "code"
+	if rec.asked == "" {
+		// The calls it makes and the tasks it starts from now on ask the same.
+		rec.asked = "1"
+	}
+	rec.mu.Unlock()
+	pprof.SetGoroutineLabels(labeled)
+	return labeled
 }
 
 // ---------- the app's own work ----------
@@ -381,7 +429,7 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 	asked := ""
 	if s := scopeOf(ctx); s != nil {
 		// A task of a profiled request is profiled too, as the other SDKs' tasks are.
-		asked = s.rec.asked
+		asked = s.rec.askedNow()
 		span := s.rec.done(s.parent(), newID(), "task.enqueue", name,
 			attrMap{"task.system": "go", "task.name": name, "code.origin": nilIfEmpty(origin())}, time.Now(), false)
 		started = &linkDoc{Kind: "enqueued_by", TraceID: s.rec.doc.ID, SpanID: span.ID}
@@ -393,6 +441,9 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 	go func() {
 		rec := t.begin("task", "task.run", name, attrs)
 		rec.asked = asked
+		if asked != "" {
+			rec.reason = "parent"
+		}
 		if started != nil {
 			rec.link(started.Kind, started.TraceID, started.SpanID)
 		}
