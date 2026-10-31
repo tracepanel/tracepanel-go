@@ -43,6 +43,8 @@ type sender struct {
 	warned  bool
 	// Whether the connection's hello said the app answers EXPLAIN: once it has a database, it connects again to say so.
 	saidExplain bool
+	// What the app does beyond EXPLAIN, which the hello says: request, profile, profile_all.
+	capabilities []string
 }
 
 func newSender(starter *starter, config Config) *sender {
@@ -195,6 +197,7 @@ func (s *sender) connect() net.Conn {
 	if databases {
 		capabilities = append(capabilities, "explain")
 	}
+	capabilities = append(capabilities, s.capabilities...)
 	hello, _ := json.Marshal(map[string]any{
 		"protocol": protocol, "max_traces": s.config.MaxTraces, "thresholds": thresholds(),
 		"service": s.config.Service, "capabilities": capabilities, "app": aboutApp(s.config),

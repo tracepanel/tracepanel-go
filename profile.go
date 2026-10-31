@@ -1,0 +1,356 @@
+package tracepanel
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"runtime/pprof"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Where a trace's time goes in code: Go's CPU profiler (runtime/pprof), the trace's `profile`, a flame graph in the
+// console. Nothing runs until a trace is profiled: TRACEPANEL_PROFILE=1 (or Config.Profile) profiles every one, a
+// request asks with the X-Tracepanel-Profile: 1 header or the panel's tracepanel_profile=1 cookie, and a task
+// started from a profiled trace (tracepanel.Go) is profiled too.
+//
+// The profiler is the process's, sampling every goroutine on a CPU 100 times a second, so a sample stands for 10 ms
+// of CPU time. A profiled trace's goroutine carries a pprof label naming the trace (tracepanel_trace), which the
+// goroutines it starts inherit; a sample is the trace's when it carries its label. That holds with any number of
+// requests at once: no sample of another request is taken for this one. The profile is the CPU's time only: a
+// goroutine waiting (for the database, a lock, a sleep) isn't sampled.
+//
+// The profiler runs while a profiled trace does. It hands its samples over only once stopped, so when a profiled
+// trace ends, it is stopped, its samples go to every profiled trace (the ended ones get their profile, the running
+// ones keep theirs), and it starts again for those still running. Meanwhile a trace's profile is being cut, its
+// document waits (in the background: the response has gone). While it stops (on macOS up to 100 ms, as runtime/pprof
+// reads its samples there; on Linux at once), the traces still running aren't sampled. Samples the profiler lost (its
+// buffer full) can't be told apart: each trace profiled then counts them as `dropped`.
+//
+// Memory isn't profiled: Go's heap profile is the process's, its samples carry no labels, so what one request
+// allocated can't be told, and the app doesn't say profile_memory.
+//
+// An app that runs a CPU profile of its own (net/http/pprof's /debug/pprof/profile) has the profiler: its traces
+// get no profile meanwhile, and the log says so once.
+
+const (
+	// The label a profiled trace's goroutines carry: its id.
+	profileLabel = "tracepanel_trace"
+	// How deep a stack is kept: a recursion beyond it is cut, outermost frames kept.
+	maxProfileDepth = 128
+	// Distinct stacks one trace keeps; the rest are counted as one "(other)" frame, so a profile stays small.
+	maxProfileStacks = 2000
+	// runtime/pprof samples 100 times a second.
+	defaultIntervalUs = 10_000
+)
+
+type profileDoc struct {
+	IntervalUs int64          `json:"interval_us"`
+	Samples    int64          `json:"samples"`
+	Dropped    int64          `json:"dropped"`
+	Frames     []profileFrame `json:"frames"`
+	Stacks     []profileStack `json:"stacks"`
+}
+
+type profileFrame struct {
+	Function string  `json:"function"`
+	Module   *string `json:"module"`
+	File     string  `json:"file"`
+	Line     int     `json:"line"`
+	InApp    bool    `json:"in_app"`
+}
+
+type profileStack struct {
+	Frames []int `json:"frames"`
+	Count  int64 `json:"count"`
+}
+
+// traceProfile is a profiled trace's samples so far: its stacks (as keys into frames) and how often each was seen.
+type traceProfile struct {
+	id      string
+	stacks  map[string]*profileStack
+	frames  []profileFrame
+	index   map[cpuFrame]int
+	samples int64
+	dropped int64
+	// The profiler couldn't run while it did (another CPU profile had it).
+	missed bool
+	done   func(*profileDoc)
+}
+
+// profiler runs the process's CPU profile while traces are profiled, and shares its samples out among them.
+type profiler struct {
+	mu      sync.Mutex
+	running bool
+	cutting bool
+	out     *bytes.Buffer
+	traces  map[string]*traceProfile
+	ending  []*traceProfile
+	// Profiles being cut: Flush waits for them.
+	pending sync.WaitGroup
+	warned  bool
+	// What starts and stops the CPU profile: runtime/pprof's, the tests' own.
+	startCPU func(*bytes.Buffer) error
+	stopCPU  func()
+}
+
+func newProfiler() *profiler {
+	return &profiler{
+		traces:   map[string]*traceProfile{},
+		startCPU: func(out *bytes.Buffer) error { return pprof.StartCPUProfile(out) },
+		stopCPU:  pprof.StopCPUProfile,
+	}
+}
+
+// start profiles a trace from now on: the context its goroutine runs with carries the trace's label (the caller sets
+// it on the goroutine, pprof.SetGoroutineLabels).
+func (p *profiler) start(ctx context.Context, id string) (context.Context, *traceProfile) {
+	tp := &traceProfile{id: id, stacks: map[string]*profileStack{}, index: map[cpuFrame]int{}}
+	p.mu.Lock()
+	p.traces[id] = tp
+	if !p.running && !p.cutting {
+		p.begin()
+	}
+	if !p.running && !p.cutting {
+		tp.missed = true
+	}
+	p.mu.Unlock()
+	return pprof.WithLabels(ctx, pprof.Labels(profileLabel, id)), tp
+}
+
+// begin starts the CPU profile (the caller holds the lock).
+func (p *profiler) begin() {
+	out := &bytes.Buffer{}
+	if err := p.startCPU(out); err != nil {
+		for _, tp := range p.traces {
+			tp.missed = true
+		}
+		if !p.warned {
+			p.warned = true
+			slog.Warn("tracepanel: no profiles while the app runs a CPU profile of its own", "error", err.Error())
+		}
+		return
+	}
+	p.out = out
+	p.running = true
+}
+
+// end ends a trace's profile: done gets it once the profiler handed its samples over, in another goroutine.
+func (p *profiler) end(tp *traceProfile, done func(*profileDoc)) {
+	p.pending.Add(1)
+	p.mu.Lock()
+	tp.done = done
+	p.ending = append(p.ending, tp)
+	if !p.cutting {
+		p.cutting = true
+		go p.cut()
+	}
+	p.mu.Unlock()
+}
+
+// cut stops the profile, shares its samples out, gives the ended traces their profiles, and starts it again for the
+// traces still running.
+func (p *profiler) cut() {
+	for {
+		p.mu.Lock()
+		batch := p.ending
+		p.ending = nil
+		if len(batch) == 0 {
+			p.cutting = false
+			p.mu.Unlock()
+			return
+		}
+		wasRunning, out := p.running, p.out
+		p.running, p.out = false, nil
+		p.mu.Unlock()
+
+		var parsed *cpuProfile
+		if wasRunning {
+			p.stopCPU()
+			parsed, _ = parseCPUProfile(out.Bytes(), profileLabel)
+		}
+
+		p.mu.Lock()
+		if parsed != nil {
+			p.share(parsed)
+		}
+		for _, tp := range batch {
+			delete(p.traces, tp.id)
+		}
+		if len(p.traces) > 0 {
+			p.begin()
+		}
+		p.mu.Unlock()
+
+		for _, tp := range batch {
+			if tp.missed {
+				tp.done(nil)
+			} else {
+				tp.done(tp.document(parsed))
+			}
+			p.pending.Done()
+		}
+	}
+}
+
+// share gives each profiled trace the samples carrying its label, and each the samples the profiler lost.
+func (p *profiler) share(parsed *cpuProfile) {
+	var lost int64
+	for _, sample := range parsed.samples {
+		if len(sample.stack) > 0 && lostSample(sample.stack[0].function) {
+			lost += sample.count
+			continue
+		}
+		if tp := p.traces[sample.trace]; tp != nil && sample.trace != "" {
+			tp.add(sample)
+		}
+	}
+	for _, tp := range p.traces {
+		tp.dropped += lost
+	}
+}
+
+func lostSample(function string) bool {
+	return function == "runtime/pprof.lostProfileEvent" || strings.HasPrefix(function, "runtime._Lost")
+}
+
+// wait waits for the profiles being cut, at most until the deadline.
+func (p *profiler) wait(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		p.pending.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
+}
+
+// add counts a sample of the trace: its stack, outermost frame first, without Tracepanel's own frames.
+func (tp *traceProfile) add(sample cpuSample) {
+	keys := make([]int, 0, len(sample.stack))
+	for i := len(sample.stack) - 1; i >= 0 && len(keys) < maxProfileDepth; i-- {
+		frame := sample.stack[i]
+		if frame.function == "runtime.goexit" || ownFrame(frame) {
+			continue
+		}
+		keys = append(keys, tp.frameIndex(frame))
+	}
+	if len(keys) == 0 {
+		return
+	}
+	key := stackKey(keys)
+	stack := tp.stacks[key]
+	if stack == nil {
+		if len(tp.stacks) >= maxProfileStacks {
+			keys = []int{tp.frameIndex(cpuFrame{function: "(other)"})}
+			key = stackKey(keys)
+			stack = tp.stacks[key]
+		}
+		if stack == nil {
+			stack = &profileStack{Frames: keys}
+			tp.stacks[key] = stack
+		}
+	}
+	stack.Count += sample.count
+	tp.samples += sample.count
+}
+
+func (tp *traceProfile) frameIndex(frame cpuFrame) int {
+	// One frame per function, wherever in it a sample was.
+	frame.line = 0
+	if at, ok := tp.index[frame]; ok {
+		return at
+	}
+	tp.index[frame] = len(tp.frames)
+	tp.frames = append(tp.frames, profileFrameOf(frame))
+	return len(tp.frames) - 1
+}
+
+func stackKey(keys []int) string {
+	var b strings.Builder
+	for i, key := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(key))
+	}
+	return b.String()
+}
+
+// document is the trace's `profile`: its stacks, the most seen first, and only the frames they name. A trace no
+// sample saw (it took less CPU than a sample stands for) has one with no stacks: its 0 samples say why.
+func (tp *traceProfile) document(parsed *cpuProfile) *profileDoc {
+	interval := int64(defaultIntervalUs)
+	if parsed != nil && parsed.periodNs >= 1000 {
+		interval = parsed.periodNs / 1000
+	}
+	stacks := make([]*profileStack, 0, len(tp.stacks))
+	for _, stack := range tp.stacks {
+		stacks = append(stacks, stack)
+	}
+	sort.SliceStable(stacks, func(i, j int) bool {
+		if stacks[i].Count != stacks[j].Count {
+			return stacks[i].Count > stacks[j].Count
+		}
+		return stackKey(stacks[i].Frames) < stackKey(stacks[j].Frames)
+	})
+	doc := &profileDoc{IntervalUs: interval, Samples: tp.samples, Dropped: tp.dropped, Frames: []profileFrame{}, Stacks: []profileStack{}}
+	renumber := map[int]int{}
+	for _, stack := range stacks {
+		frames := make([]int, len(stack.Frames))
+		for i, frame := range stack.Frames {
+			to, ok := renumber[frame]
+			if !ok {
+				to = len(doc.Frames)
+				renumber[frame] = to
+				doc.Frames = append(doc.Frames, tp.frames[frame])
+			}
+			frames[i] = to
+		}
+		doc.Stacks = append(doc.Stacks, profileStack{Frames: frames, Count: stack.Count})
+	}
+	return doc
+}
+
+// ownFrame: Tracepanel's own code (the core and its integrations), but for its tests, which play the app.
+func ownFrame(frame cpuFrame) bool {
+	module, _ := splitFunction(frame.function)
+	if module != modulePath && !strings.HasPrefix(module, modulePath+"/internal/") &&
+		!(strings.HasPrefix(module, modulePath+"/") && strings.HasSuffix(module, "trace")) {
+		return false
+	}
+	return !strings.HasSuffix(frame.file, "_test.go")
+}
+
+// profileFrameOf is a function as the profile names it: its package as the module, the file as the project sees it.
+func profileFrameOf(frame cpuFrame) profileFrame {
+	if frame.file == "" {
+		return profileFrame{Function: frame.function, File: "", Line: 0}
+	}
+	module, function := splitFunction(frame.function)
+	own := inApp(frame.function, frame.file)
+	file := libraryPath(frame.file, module)
+	if own {
+		file = relative(frame.file)
+	}
+	return profileFrame{Function: function, Module: &module, File: file, Line: frame.start, InApp: own}
+}
+
+// libraryPath is a library's file from its module on (github.com/jackc/pgx/v5@v5.7.1/conn.go), the standard
+// library's from its package (net/http/server.go): a package whose path has no domain is the standard library's.
+func libraryPath(file, module string) string {
+	if at := strings.Index(file, "/pkg/mod/"); at >= 0 {
+		return file[at+len("/pkg/mod/"):]
+	}
+	if first, _, _ := strings.Cut(module, "/"); module != "" && !strings.Contains(first, ".") {
+		if at := strings.LastIndex(file, "/src/"+module+"/"); at >= 0 {
+			return file[at+len("/src/"):]
+		}
+	}
+	return file
+}

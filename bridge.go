@@ -96,9 +96,16 @@ func (b *bridgeSpan) SameTrace(ctx context.Context) bool {
 type bridgeTrace struct {
 	t   *tracepanel
 	rec *recording
+	// Gives the goroutine its labels back, once a profiled trace finishes.
+	restore func()
 }
 
+// Context is ctx for the trace's work, which the integration runs on this goroutine: with every trace profiled
+// (TRACEPANEL_PROFILE=1), the goroutine carries its label until Finish.
 func (b *bridgeTrace) Context(ctx context.Context) context.Context {
+	if b.rec.profile == nil && b.restore == nil && b.t.profileAll {
+		ctx, b.restore = b.t.profile(ctx, b.rec)
+	}
 	return within(ctx, b.rec, b.rec.root.ID)
 }
 
@@ -106,7 +113,13 @@ func (b *bridgeTrace) Rename(name string)                { b.rec.rename(name) }
 func (b *bridgeTrace) Set(key string, value any)         { b.rec.set(key, value) }
 func (b *bridgeTrace) Link(kind, traceID, spanID string) { b.rec.link(kind, traceID, spanID) }
 func (b *bridgeTrace) Fail()                             { b.rec.fail() }
-func (b *bridgeTrace) Finish()                           { b.t.finish(b.rec) }
+
+func (b *bridgeTrace) Finish() {
+	if b.restore != nil {
+		b.restore()
+	}
+	b.t.finish(b.rec)
+}
 
 func (b *bridgeTrace) Error(err error) {
 	b.rec.addError(errorDoc{

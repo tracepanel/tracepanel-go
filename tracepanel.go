@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +45,9 @@ type Config struct {
 	MaxTraces int
 	// The route of a request, for a router that doesn't set Request.Pattern as ServeMux does: "/books/{id}".
 	Route func(*http.Request) string
+	// Profile every trace (where its CPU time went, a flame graph in the console), not only a request that asks
+	// with the panel's Profile toggle: TRACEPANEL_PROFILE=1. TRACEPANEL_PROFILE_ENABLED=0 profiles nothing.
+	Profile bool
 }
 
 // tracepanel records an app's traces and sends them to its agent.
@@ -54,6 +58,12 @@ type tracepanel struct {
 	sender  *sender
 	// Where an ended trace goes: the sender's queue.
 	deliver func(*traceDoc)
+	// The CPU profiler of profiled traces: nil when profiling is off (TRACEPANEL_PROFILE_ENABLED=0).
+	profiler *profiler
+	// Every trace is profiled (Config.Profile, TRACEPANEL_PROFILE=1), not only those asked to be.
+	profileAll bool
+	// A request's headers, query, cookies and body are kept (TRACEPANEL_CAPTURE_REQUEST=0: not).
+	captureRequest bool
 }
 
 var (
@@ -89,6 +99,14 @@ func setup(config ...Config) *tracepanel {
 	return t
 }
 
+func on(value string) bool {
+	switch value {
+	case "1", "true", "True", "TRUE", "on", "yes":
+		return true
+	}
+	return false
+}
+
 func off(value string) bool {
 	switch value {
 	case "0", "false", "False", "FALSE", "off", "no":
@@ -100,11 +118,28 @@ func off(value string) bool {
 func newTracepanel(config Config) *tracepanel {
 	start := &starter{storeDir: config.StoreDir}
 	t := &tracepanel{
-		config:  config,
-		starter: start,
-		console: &console{configured: config.ConsoleURL, storeDir: config.StoreDir},
+		config:         config,
+		starter:        start,
+		console:        &console{configured: config.ConsoleURL, storeDir: config.StoreDir},
+		profileAll:     config.Profile,
+		captureRequest: !off(os.Getenv("TRACEPANEL_CAPTURE_REQUEST")),
+	}
+	if !off(os.Getenv("TRACEPANEL_PROFILE_ENABLED")) {
+		t.profiler = newProfiler()
 	}
 	t.sender = newSender(start, config)
+	// The console offers what the app does: the Request tab, recording a request with a profile, profiling as on.
+	// Not profile_memory: Go's heap profile is the process's, with no labels, so what one request allocated can't be
+	// told.
+	if t.captureRequest {
+		t.sender.capabilities = append(t.sender.capabilities, "request")
+	}
+	if t.profiler != nil {
+		t.sender.capabilities = append(t.sender.capabilities, "profile")
+		if t.profileAll {
+			t.sender.capabilities = append(t.sender.capabilities, "profile_all")
+		}
+	}
 	t.deliver = t.sender.submit
 	return t
 }
@@ -115,6 +150,9 @@ func withDefaults(config Config) Config {
 	}
 	if config.ConsoleURL == "" {
 		config.ConsoleURL = os.Getenv("TRACEPANEL_CONSOLE_URL")
+	}
+	if !config.Profile {
+		config.Profile = on(os.Getenv("TRACEPANEL_PROFILE"))
 	}
 	if config.StoreDir == "" {
 		config.StoreDir = envOr("TRACEPANEL_DIR", ".tracepanel")
@@ -202,8 +240,16 @@ func thresholds() map[string]any {
 // Flush waits until the traces recorded so far went to the agent, or `timeout` passed: a command calls it before
 // it exits.
 func Flush(timeout time.Duration) {
-	if t := active.Load(); t != nil && t.sender != nil {
-		t.sender.flush(timeout)
+	t := active.Load()
+	if t == nil {
+		return
+	}
+	deadline := time.Now().Add(timeout)
+	if t.profiler != nil {
+		t.profiler.wait(timeout)
+	}
+	if t.sender != nil {
+		t.sender.flush(time.Until(deadline))
 	}
 }
 
@@ -228,9 +274,43 @@ func (t *tracepanel) begin(kind, rootKind, name string, attrs attrMap) *recordin
 	return newRecording(kind, rootKind, name, attrs)
 }
 
-// finish sends an ended trace to the agent.
+// finish sends an ended trace to the agent; a profiled one once its profile is cut.
 func (t *tracepanel) finish(rec *recording) {
-	t.deliver(rec.finish())
+	doc := rec.finish()
+	if rec.profile == nil {
+		t.deliver(doc)
+		return
+	}
+	t.profiler.end(rec.profile, func(profile *profileDoc) {
+		if profile != nil {
+			doc.Profile = profile
+			if profile.Dropped > 0 {
+				doc.Attrs["tracepanel.dropped_samples"] = profile.Dropped
+			}
+		}
+		t.deliver(doc)
+	})
+}
+
+// profiles tells whether a trace that asked for `asked` ("1", "memory", "" for nothing) is profiled.
+func (t *tracepanel) profiles(asked string) bool {
+	return t.profiler != nil && (t.profileAll || asked != "")
+}
+
+// profile starts the trace's profile when it is to be profiled: the current goroutine, and those it starts, carry
+// its label until restore. One that isn't profiled carries no trace's label, not even the one its creator had.
+func (t *tracepanel) profile(ctx context.Context, rec *recording) (context.Context, func()) {
+	if t.profiler == nil {
+		return ctx, func() {}
+	}
+	labeled := pprof.WithLabels(ctx, pprof.Labels(profileLabel, ""))
+	if t.profiles(rec.asked) {
+		labeled, rec.profile = t.profiler.start(ctx, rec.doc.ID)
+	} else if _, carried := pprof.Label(ctx, profileLabel); !carried {
+		return ctx, func() {}
+	}
+	pprof.SetGoroutineLabels(labeled)
+	return labeled, func() { pprof.SetGoroutineLabels(ctx) }
 }
 
 // ---------- the app's own work ----------
@@ -288,7 +368,10 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 	}
 	attrs := attrMap{"task.system": "go", "task.name": name, "task.trigger": "other"}
 	var started *linkDoc
+	asked := ""
 	if s := scopeOf(ctx); s != nil {
+		// A task of a profiled request is profiled too, as the other SDKs' tasks are.
+		asked = s.rec.asked
 		span := s.rec.done(s.parent(), newID(), "task.enqueue", name,
 			attrMap{"task.system": "go", "task.name": name, "code.origin": nilIfEmpty(origin())}, time.Now(), false)
 		started = &linkDoc{Kind: "enqueued_by", TraceID: s.rec.doc.ID, SpanID: span.ID}
@@ -299,8 +382,13 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 	}
 	go func() {
 		rec := t.begin("task", "task.run", name, attrs)
+		rec.asked = asked
 		if started != nil {
 			rec.link(started.Kind, started.TraceID, started.SpanID)
+		}
+		if t.profiler != nil {
+			// The goroutine was started with its request's labels: the task's samples are its own, not the request's.
+			pprof.SetGoroutineLabels(pprof.WithLabels(detached, pprof.Labels(profileLabel, "")))
 		}
 		_ = t.run(detached, rec, fn)
 	}()
@@ -308,7 +396,9 @@ func Go(ctx context.Context, name string, fn func(context.Context) error) {
 
 // run runs fn in its trace, and ends the trace: an error or a panic fails it.
 func (t *tracepanel) run(ctx context.Context, rec *recording, fn func(context.Context) error) (err error) {
+	ctx, restore := t.profile(ctx, rec)
 	defer func() {
+		restore()
 		if recovered := recover(); recovered != nil {
 			recordPanic(rec, recovered, callers(1))
 			rec.fail()

@@ -61,12 +61,21 @@ Go 1.26 or later.
   (`http.NewRequestWithContext(ctx, ...)`) through `http.DefaultClient` or
   a client with `tracepanel.WrapTransport(base)`, each with a
   `traceparent`, so the app it reaches links its trace to the call.
-  `http.Get(url)` carries no context, so it isn't recorded. When the panel's Profile
-  asked for the request, its calls carry `X-Tracepanel-Profile`, so the
-  apps down the chain profile their part.
+  `http.Get(url)` carries no context, so it isn't recorded. When the
+  panel's Profile asked for the request, its calls carry
+  `X-Tracepanel-Profile`, so the apps down the chain profile their part.
 - Panics, with your frames and the source around them. The request
   answers 500.
 - The caller's trace, when a request carries a W3C `traceparent`.
+- What the request carried, for the console's Request tab: its headers,
+  query, cookies, the body as far as your handler read it (up to 16 KB;
+  JSON and forms with their secrets masked, text as it is, binary left
+  out) and the response's headers. Values under a name that looks
+  secret (`Authorization`, `password`, `sessionid`, `api_key`) are
+  masked before they are recorded, and none of it leaves your machine.
+  The SDK never reads a body your handler didn't.
+- Where a request's CPU time went, when the panel's Profile asks for it
+  (see [Profiles](#profiles)).
 
 Every response carries `Tracepanel-Id` and `Server-Timing`, and an HTML page
 gets the badge: a page is held until the handler returns, unless it
@@ -96,6 +105,24 @@ tracepanel.Setup(tracepanel.Config{
 })
 router.Use(tracepanel.Middleware)
 ```
+
+### Profiles
+
+The panel's Profile toggle (or a call carrying `X-Tracepanel-Profile: 1`)
+records the next requests with a profile: a flame graph of where their CPU
+time went, from Go's own profiler (`runtime/pprof`). The request's
+goroutine carries a profiler label, and so do the goroutines it starts, so
+a profile holds only that request's samples, however many requests run at
+once. A task it starts with `tracepanel.Go` is profiled too.
+`TRACEPANEL_PROFILE=1` (or `Config.Profile`) profiles every trace.
+
+Go's profiler samples 100 times a second of CPU time: a request that takes
+less than 10 ms of CPU may have no sample, and time spent waiting (for the
+database, a lock) isn't in the profile, which the trace's spans show. An
+app that runs a CPU profile of its own (`/debug/pprof/profile`) gets no
+Tracepanel profiles meanwhile. Memory isn't profiled: Go's heap profile is
+the whole process's, with no labels, so what one request allocated can't
+be told.
 
 ### Databases
 
@@ -287,6 +314,9 @@ exits, so its traces reach the agent.
 | `StoreDir` | `TRACEPANEL_DIR` | `.tracepanel`, the project's store |
 | `ConsoleURL` | `TRACEPANEL_CONSOLE_URL` | where the project's agent serves it |
 | `MaxTraces` | `TRACEPANEL_MAX_TRACES` | `2000`, the traces the agent keeps |
+| `Profile` | `TRACEPANEL_PROFILE` | off; `1` profiles every trace, not only those the panel asks for |
+| | `TRACEPANEL_PROFILE_ENABLED` | on; `0` profiles nothing |
+| | `TRACEPANEL_CAPTURE_REQUEST` | on; `0` keeps no headers, query, cookies or body |
 | | `TRACEPANEL_AGENT_BIN` | the one the SDK downloads |
 | | `TRACEPANEL_AGENT` | `auto`; an agent elsewhere (`tcp:host:port`), never started; `off` starts none |
 | | `TRACEPANEL_CACHE_DIR` | `~/.cache/tracepanel`, where the downloaded agent is kept |

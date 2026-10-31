@@ -41,6 +41,17 @@ Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
   linked to the request that started it, `tracepanel.Command` for a job
   or a command, and `tracepanel.SetUser(ctx, id, username)` for the
   signed-in user (the username stays on this machine).
+- Profiles: the panel's Profile toggle (or `X-Tracepanel-Profile: 1`)
+  records a request with a flame graph of where its CPU time went, from
+  `runtime/pprof`, its goroutines labeled so that only its own samples
+  are its, with any number of requests at once; a task it starts with
+  `tracepanel.Go` is profiled too, and `TRACEPANEL_PROFILE=1` (or
+  `Config.Profile`) profiles every trace. Samples the profiler lost are
+  counted as `dropped`. Not memory: Go's heap profile is the process's.
+- The console's Request tab: a request's headers, query, cookies, the
+  body as far as the handler read it (16 KB; JSON and forms masked,
+  binary left out) and the response's headers, secret-looking values
+  masked; `TRACEPANEL_CAPTURE_REQUEST=0` keeps none of it.
 - The integrations, each a module of its own tagged with the core
   (`gintrace/v0.10.0`), so the core keeps no dependencies:
   - `gintrace.Middleware()` for gin, `echotrace.Middleware()` for Echo v4

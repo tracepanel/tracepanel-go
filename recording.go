@@ -51,6 +51,8 @@ type recording struct {
 	view string
 	// What its request asked of profiling ("1", "memory"; "" nothing): the calls it makes ask the same.
 	asked string
+	// Its CPU profile, while it is profiled.
+	profile *traceProfile
 }
 
 func newRecording(kind, rootKind, name string, attrs attrMap) *recording {
@@ -134,6 +136,17 @@ func (r *recording) set(key string, value any) {
 	defer r.mu.Unlock()
 	if !r.finished {
 		r.doc.Attrs[key] = value
+	}
+}
+
+// setAll sets several of the trace's attributes.
+func (r *recording) setAll(attrs attrMap) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.finished {
+		for key, value := range attrs {
+			r.doc.Attrs[key] = value
+		}
 	}
 }
 

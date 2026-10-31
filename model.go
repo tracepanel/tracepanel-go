@@ -25,6 +25,8 @@ type traceDoc struct {
 	Errors   []errorDoc `json:"errors"`
 	Links    []linkDoc  `json:"links"`
 	Issues   []any      `json:"issues"`
+	// Where its CPU time went, when it was profiled.
+	Profile *profileDoc `json:"profile,omitempty"`
 }
 
 type spanDoc struct {

@@ -25,7 +25,8 @@ func inApp(function, file string) bool {
 		return true
 	}
 	module := appModule.Load()
-	return module != nil && *module != "" && strings.HasPrefix(function, *module+"/")
+	return module != nil && *module != "" &&
+		(strings.HasPrefix(function, *module+"/") || strings.HasPrefix(function, *module+"."))
 }
 
 func callers(skip int) []uintptr {

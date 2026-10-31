@@ -51,7 +51,14 @@ func (t *tracepanel) middleware(next http.Handler) http.Handler {
 		}
 		rec := t.begin("http", "http", r.Method+" "+r.URL.Path, attrs)
 		rec.asked = profileAsked(r)
-		req := r.WithContext(within(r.Context(), rec, rec.root.ID))
+		ctx, restore := t.profile(r.Context(), rec)
+		defer restore()
+		req := r.WithContext(within(ctx, rec, rec.root.ID))
+		var body *bodyTap
+		if t.captureRequest {
+			rec.setAll(requestAttrs(r))
+			body = tapBody(req)
+		}
 		held := &heldResponse{w: w, header: http.Header{}, status: http.StatusOK, t: t, rec: rec}
 		func() {
 			defer func() {
@@ -73,13 +80,17 @@ func (t *tracepanel) middleware(next http.Handler) http.Handler {
 			rec.fail()
 		}
 		held.finish()
+		if t.captureRequest {
+			rec.setAll(body.attrs(r.Header.Get("Content-Type"), req))
+			rec.setAll(responseHeaders(held.w.Header()))
+		}
 		t.finish(rec)
 	})
 }
 
 // The ask to profile a request, which the panel's Profile toggle makes (its cookie) and a call from a profiled
-// trace carries (the header): this SDK doesn't profile yet, but the calls the request makes ask the same, so the
-// apps down the chain do.
+// trace carries (the header): the request is profiled (profile.go), and the calls it makes ask the same, so the apps
+// down the chain profile their part.
 const (
 	profileHeader = "X-Tracepanel-Profile"
 	profileCookie = "tracepanel_profile"
@@ -307,6 +318,9 @@ func (h *heldResponse) consoleURL(page bool) string {
 	return url
 }
 
+// What a single-page app on another origin may read of the response: what the badge reads.
+const exposedHeaders = "Tracepanel-Id, Tracepanel-Url, Server-Timing"
+
 // headers are what the badge reads: the trace's id, where it is in the console, and its timing so far.
 func (h *heldResponse) headers(header http.Header) {
 	id := h.rec.doc.ID
@@ -323,7 +337,7 @@ func (h *heldResponse) headers(header http.Header) {
 	header.Add("Server-Timing", fmt.Sprintf(`db;dur=%.1f;desc="%d %s", app;dur=%.1f, total;dur=%.1f, tracepanel-issues;desc="pending"`,
 		dbMs, queries, noun, max(totalMs-dbMs, 0), totalMs))
 	// A single-page app on another origin reads them too.
-	header.Add("Access-Control-Expose-Headers", "Tracepanel-Id, Tracepanel-Url, Server-Timing")
+	header.Add("Access-Control-Expose-Headers", exposedHeaders)
 }
 
 // scriptTag is widget.min.js with the page's own request in data-tracepanel-* attributes.
