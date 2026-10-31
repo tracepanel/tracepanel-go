@@ -57,9 +57,11 @@ Go 1.26 or later.
   transaction around its statements.
 - `slog` records logged with the request's context
   (`slog.InfoContext(ctx, ...)`), with the line that logged them.
-- Calls to HTTP APIs through `http.DefaultClient` (`http.Get` too) or a
-  client with `tracepanel.WrapTransport(base)`, each with a `traceparent`, so
-  the app it reaches links its trace to the call. When the panel's Profile
+- Calls to HTTP APIs made with the request's context
+  (`http.NewRequestWithContext(ctx, ...)`) through `http.DefaultClient` or
+  a client with `tracepanel.WrapTransport(base)`, each with a
+  `traceparent`, so the app it reaches links its trace to the call.
+  `http.Get(url)` carries no context, so it isn't recorded. When the panel's Profile
   asked for the request, its calls carry `X-Tracepanel-Profile`, so the
   apps down the chain profile their part.
 - Panics, with your frames and the source around them. The request
@@ -300,8 +302,12 @@ exits, so its traces reach the agent.
 `TRACEPANEL_SLOW_SQL_MS` and `TRACEPANEL_LONG_TRANSACTION_MS` take a limit
 per database too, by its kind: `TRACEPANEL_SLOW_SQL_MS=100,snowflake=3000`
 holds every database to 100 ms but Snowflake, to 3 s. Without one, the
-agent holds an analytical warehouse (Snowflake, BigQuery, ClickHouse) to
-2 s per query.
+agent holds an analytical warehouse (Snowflake, BigQuery, Databricks,
+Redshift, ClickHouse) to 2 s per query. The kind comes from the driver:
+`pgx` and `lib/pq` are `postgresql`, gosnowflake's is `snowflake`, and
+so are BigQuery's, Databricks', Trino's, MySQL's, SQLite's, SQL
+Server's and Oracle's drivers told; for another,
+`tracepanel.DBSystem("cockroachdb")` names it.
 
 Without an agent (none could be had, or it couldn't start), the log says
 why once. Responses keep their headers, pages get no badge, and traces

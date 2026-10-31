@@ -33,7 +33,8 @@ Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
   transaction.
 - `slog` records logged with a request's context, with the line that
   logged them, secret-looking fields masked, and calls through
-  `http.DefaultClient` or `tracepanel.WrapTransport` with a `traceparent`,
+  `http.DefaultClient` or `tracepanel.WrapTransport` with the request's
+  context, with a `traceparent`,
   and `X-Tracepanel-Profile` when the request was asked to be profiled, so
   the apps down the chain profile their part.
 - `tracepanel.Span` for the app's own code, `tracepanel.Go` for a task
@@ -71,7 +72,9 @@ Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
 - `TRACEPANEL_N_PLUS_ONE_MIN_MS`, `TRACEPANEL_QUEUE_WAIT_MS` and
   `TRACEPANEL_MAX_TRACES`, and a limit per database in
   `TRACEPANEL_SLOW_SQL_MS` and `TRACEPANEL_LONG_TRANSACTION_MS`:
-  `100,snowflake=3000`.
+  `100,snowflake=3000`, the database's kind told by its driver
+  (gosnowflake's is `snowflake`, BigQuery's, Databricks', Redshift's
+  too), else by `tracepanel.DBSystem`.
 - `go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp`: the
   agent's MCP server for AI coding agents, and `dev` for its console in
   the foreground.

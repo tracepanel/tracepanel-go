@@ -158,7 +158,8 @@ func DBSystem(name string) DBOption {
 // DBName is the database's name, shown with its queries (the alias otherwise).
 func DBName(name string) DBOption { return func(db *database) { db.namespace = name } }
 
-// systemOf is a database's kind from its driver's name or package.
+// systemOf is a database's kind from its driver's name or package, as OpenTelemetry names it: "pgx" and lib/pq are
+// "postgresql", gosnowflake's "snowflake" is "snowflake".
 func systemOf(name string) string {
 	name = strings.ToLower(name)
 	for _, known := range []struct{ part, system string }{
@@ -166,6 +167,9 @@ func systemOf(name string) string {
 		{"mysql", "mysql"}, {"mariadb", "mariadb"}, {"sqlite", "sqlite"},
 		{"sqlserver", "mssql"}, {"mssql", "mssql"}, {"godror", "oracle"}, {"go-ora", "oracle"}, {"oracle", "oracle"},
 		{"clickhouse", "clickhouse"}, {"duckdb", "duckdb"},
+		// The analytical warehouses, which the agent holds to limits of their own.
+		{"snowflake", "snowflake"}, {"bigquery", "bigquery"}, {"databricks", "databricks"}, {"redshift", "redshift"},
+		{"trino", "trino"},
 	} {
 		if name == known.part || strings.Contains(name, known.part) && len(known.part) > 2 {
 			return known.system

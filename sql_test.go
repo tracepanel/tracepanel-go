@@ -1,6 +1,9 @@
 package tracepanel
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // The same cases as the other SDKs' and the agent's own tests: one rule everywhere.
 
@@ -129,5 +132,29 @@ func TestCommentsNameAndGroupNothing(t *testing.T) {
 		if got != (parsedSQL{name: c.name, text: c.text, fingerprint: c.fingerprint}) {
 			t.Errorf("%q:\n got %+v\nwant %+v", c.sql, got, parsedSQL{name: c.name, text: c.text, fingerprint: c.fingerprint})
 		}
+	}
+}
+
+func TestADatabaseKindIsKnownByItsDriver(t *testing.T) {
+	got := map[string]string{}
+	for _, name := range []string{
+		"pgx", "postgres", "github.com/lib/pq", "github.com/jackc/pgx/v5/stdlib", "mysql", "sqlite", "sqlite3",
+		"modernc.org/sqlite", "sqlserver", "mssql", "godror", "oracle", "clickhouse", "duckdb", "snowflake",
+		"github.com/snowflakedb/gosnowflake", "bigquery", "databricks", "github.com/databricks/databricks-sql-go",
+		"redshift", "trino", "acme",
+	} {
+		got[name] = systemOf(name)
+	}
+
+	want := map[string]string{
+		"pgx": "postgresql", "postgres": "postgresql", "github.com/lib/pq": "postgresql",
+		"github.com/jackc/pgx/v5/stdlib": "postgresql", "mysql": "mysql", "sqlite": "sqlite", "sqlite3": "sqlite",
+		"modernc.org/sqlite": "sqlite", "sqlserver": "mssql", "mssql": "mssql", "godror": "oracle", "oracle": "oracle",
+		"clickhouse": "clickhouse", "duckdb": "duckdb", "snowflake": "snowflake",
+		"github.com/snowflakedb/gosnowflake": "snowflake", "bigquery": "bigquery", "databricks": "databricks",
+		"github.com/databricks/databricks-sql-go": "databricks", "redshift": "redshift", "trino": "trino", "acme": "",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("systems: %v", got)
 	}
 }
