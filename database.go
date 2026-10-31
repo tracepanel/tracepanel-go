@@ -542,13 +542,23 @@ func (c *tracedConn) begin(ctx context.Context, query string, args []driver.Name
 	if s == nil {
 		return statement{}
 	}
+	raw := make([]any, len(args))
+	for i, arg := range args {
+		raw[i] = arg.Value
+	}
+	return statement{rec: s.rec, parent: c.parent(s), name: spanName(query), attrs: statementAttrs(c.db, query, raw), start: time.Now()}
+}
+
+// statementAttrs are a statement's attributes, whatever library ran it: its one-line text, its fingerprint, its
+// parameters, and the line of the app's code that ran it.
+func statementAttrs(db *database, query string, args []any) attrMap {
 	params := make([]any, 0, min(len(args), maxParams))
 	for _, arg := range args[:min(len(args), maxParams)] {
-		params = append(params, param(arg.Value))
+		params = append(params, param(arg))
 	}
 	encoded, _ := json.Marshal(params)
 	digest := sha1.Sum(encoded)
-	attrs := c.db.attrs()
+	attrs := db.attrs()
 	attrs["db.statement"] = statementText(query)
 	attrs["db.fingerprint"] = fingerprint(query)
 	attrs["db.params"] = params
@@ -559,7 +569,7 @@ func (c *tracedConn) begin(ctx context.Context, query string, args []driver.Name
 	attrs["db.many"] = false
 	attrs["code.origin"] = nilIfEmpty(origin())
 	attrs["code.template"] = nil
-	return statement{rec: s.rec, parent: c.parent(s), name: spanName(query), attrs: attrs, start: time.Now()}
+	return attrs
 }
 
 // end records the statement as it ran; a query's rows are counted as they are read.
