@@ -161,9 +161,18 @@ on from one profiled request to the next, and is cut once none has run
 for 200 ms (or, under steady load, every 2 s): back-to-back requests are
 sampled without a gap, and a profile reaches the console a moment after
 its request. A request that runs while a cut stops the profiler says for
-how long (`tracepanel.profile_gap_ms`). Memory isn't profiled: Go's heap profile is
-the whole process's, with no labels, so what one request allocated can't
-be told.
+how long (`tracepanel.profile_gap_ms`).
+
+Every profile has the garbage collector's runs while the request ran, and
+how long they stopped the program. The panel's Profile → Memory
+(`X-Tracepanel-Profile: memory`, or `TRACEPANEL_PROFILE_MEMORY=1` for
+every profiled trace) adds what the heap did meanwhile: the bytes it
+allocated, its highest level above the start and its level at the end.
+Go's heap is the whole process's, and nothing the runtime tells of it is
+per goroutine (its heap profile's samples carry no labels), so these are
+the heap's numbers while the request ran: the request's own when it ran
+alone, and marked shared when another one ran meanwhile. Garbage counts
+until the collector frees it, and there are no allocation sites.
 
 ### Databases
 
@@ -409,6 +418,7 @@ comes from the environment:
 | `ConsoleURL` | `TRACEPANEL_CONSOLE_URL` | where the project's agent serves it |
 | `MaxTraces` | `TRACEPANEL_MAX_TRACES` | `2000`, the traces the agent keeps |
 | `Profile` | `TRACEPANEL_PROFILE` | off; `1` profiles every trace, not only those the panel asks for |
+| `ProfileMemory` | `TRACEPANEL_PROFILE_MEMORY` | off; `1` measures every profiled trace's memory, not only those asked for it |
 | | `TRACEPANEL_PROFILE_ENABLED` | on; `0` profiles nothing |
 | | `TRACEPANEL_CAPTURE_REQUEST` | on; `0` keeps no headers, query, cookies or body |
 | | `TRACEPANEL_AGENT_BIN` | the one the SDK downloads |

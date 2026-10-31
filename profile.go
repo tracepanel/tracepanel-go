@@ -33,8 +33,7 @@ import (
 // background: the response has gone). Samples the profiler lost (its buffer full) can't be told apart: each trace
 // profiled then counts them as `dropped`.
 //
-// Memory isn't profiled: Go's heap profile is the process's, its samples carry no labels, so what one request
-// allocated can't be told, and the app doesn't say profile_memory.
+// Its memory, when asked for, and the collector's runs: memory.go.
 //
 // An app that runs a CPU profile of its own (net/http/pprof's /debug/pprof/profile) has the profiler: its traces
 // get no profile meanwhile, and the log says so once.
@@ -56,6 +55,9 @@ type profileDoc struct {
 	Dropped    int64          `json:"dropped"`
 	Frames     []profileFrame `json:"frames"`
 	Stacks     []profileStack `json:"stacks"`
+	// What the heap did while the trace ran, when asked for, and the collector's runs (memory.go).
+	Memory *profileMemory `json:"memory,omitempty"`
+	GC     *profileGC     `json:"gc,omitempty"`
 }
 
 type profileFrame struct {

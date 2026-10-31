@@ -349,7 +349,7 @@ func profiledReport(t *testing.T, server *httptest.Server, console string) {
 	if !inApp {
 		t.Fatalf("frames %+v", profile.Frames)
 	}
-	if capabilities["profile"] != true || capabilities["request"] != true || capabilities["profile_memory"] != false {
+	if capabilities["profile"] != true || capabilities["request"] != true || capabilities["profile_memory"] != true {
 		t.Fatalf("capabilities %v", capabilities)
 	}
 }

@@ -53,6 +53,9 @@ type Config struct {
 	// Profile every trace (where its CPU time went, a flame graph in the console), not only a request that asks
 	// with the panel's Profile toggle: TRACEPANEL_PROFILE=1. TRACEPANEL_PROFILE_ENABLED=0 profiles nothing.
 	Profile bool
+	// Measure every profiled trace's memory (what the heap allocated while it ran), not only a request's that asks
+	// for "memory": TRACEPANEL_PROFILE_MEMORY=1.
+	ProfileMemory bool
 }
 
 // tracepanel records an app's traces and sends them to its agent.
@@ -65,8 +68,10 @@ type tracepanel struct {
 	deliver func(*traceDoc)
 	// The CPU profiler of profiled traces: nil when profiling is off (TRACEPANEL_PROFILE_ENABLED=0).
 	profiler *profiler
-	// Every trace is profiled (Config.Profile, TRACEPANEL_PROFILE=1), not only those asked to be.
-	profileAll bool
+	// Every trace is profiled (Config.Profile, TRACEPANEL_PROFILE=1), not only those asked to be; and every profiled
+	// trace's memory measured (Config.ProfileMemory, TRACEPANEL_PROFILE_MEMORY=1), not only those asked for it.
+	profileAll    bool
+	profileMemory bool
 	// A request's headers, query, cookies and body are kept (TRACEPANEL_CAPTURE_REQUEST=0: not).
 	captureRequest bool
 }
@@ -128,22 +133,25 @@ func newTracepanel(config Config) *tracepanel {
 		starter:        start,
 		console:        &console{configured: config.ConsoleURL, storeDir: config.StoreDir},
 		profileAll:     config.Profile,
+		profileMemory:  config.ProfileMemory,
 		captureRequest: !off(os.Getenv("TRACEPANEL_CAPTURE_REQUEST")),
 	}
 	if !off(os.Getenv("TRACEPANEL_PROFILE_ENABLED")) {
 		t.profiler = newProfiler()
 	}
 	t.sender = newSender(start, config)
-	// The console offers what the app does: the Request tab, recording a request with a profile, profiling as on.
-	// Not profile_memory: Go's heap profile is the process's, with no labels, so what one request allocated can't be
-	// told.
+	// The console offers what the app does: the Request tab, recording a request with a profile (with its memory
+	// too: memory.go), profiling as on.
 	if t.captureRequest {
 		t.sender.capabilities = append(t.sender.capabilities, "request")
 	}
 	if t.profiler != nil {
-		t.sender.capabilities = append(t.sender.capabilities, "profile")
+		t.sender.capabilities = append(t.sender.capabilities, "profile", "profile_memory")
 		if t.profileAll {
 			t.sender.capabilities = append(t.sender.capabilities, "profile_all")
+		}
+		if t.profileMemory {
+			t.sender.capabilities = append(t.sender.capabilities, "profile_memory_all")
 		}
 	}
 	t.deliver = t.sender.submit
@@ -159,6 +167,9 @@ func withDefaults(config Config) Config {
 	}
 	if !config.Profile {
 		config.Profile = on(os.Getenv("TRACEPANEL_PROFILE"))
+	}
+	if !config.ProfileMemory {
+		config.ProfileMemory = on(os.Getenv("TRACEPANEL_PROFILE_MEMORY"))
 	}
 	if config.StoreDir == "" {
 		config.StoreDir = envOr("TRACEPANEL_DIR", ".tracepanel")
@@ -277,18 +288,30 @@ func (t *tracepanel) begin(kind, rootKind, name string, attrs attrMap) *recordin
 	attrs["process.runtime.name"] = "go"
 	attrs["process.runtime.version"] = goVersion()
 	attrs["tracepanel.language.version"] = goVersion()
+	traces.running.Add(1)
+	traces.begun.Add(1)
 	return newRecording(kind, rootKind, name, attrs)
 }
 
 // finish sends an ended trace to the agent; a profiled one once its profile is cut.
 func (t *tracepanel) finish(rec *recording) {
 	doc := rec.finish()
+	traces.running.Add(-1)
 	if rec.profile == nil {
 		t.deliver(doc)
 		return
 	}
+	var gc *profileGC
+	var memory *profileMemory
+	if rec.gc != nil {
+		gc = rec.gc.end()
+	}
+	if rec.memory != nil {
+		memory = rec.memory.end()
+	}
 	t.profiler.end(rec.profile, func(profile *profileDoc, gap time.Duration) {
 		if profile != nil {
+			profile.GC, profile.Memory = gc, memory
 			doc.Profile = profile
 			if profile.Dropped > 0 {
 				doc.Attrs["tracepanel.dropped_samples"] = profile.Dropped
@@ -327,6 +350,7 @@ func (t *tracepanel) profile(ctx context.Context, rec *recording) (context.Conte
 	labeled := pprof.WithLabels(ctx, pprof.Labels(profileLabel, ""))
 	if reason := t.profileReason(rec); reason != "" {
 		labeled, rec.profile = t.profiler.start(ctx, rec.doc.ID)
+		rec.gc, rec.memory = t.watch(rec.asked)
 		rec.set("profile.reason", reason)
 	} else if _, carried := pprof.Label(ctx, profileLabel); !carried {
 		// Unless tracepanel.Profile labels the goroutine later on: then it gets its labels back too.
@@ -338,6 +362,16 @@ func (t *tracepanel) profile(ctx context.Context, rec *recording) (context.Conte
 	}
 	pprof.SetGoroutineLabels(labeled)
 	return labeled, func() { pprof.SetGoroutineLabels(ctx) }
+}
+
+// watch begins watching the collector for a trace being profiled, and its memory when it asked for it ("memory") or
+// every profiled trace's is measured (TRACEPANEL_PROFILE_MEMORY=1).
+func (t *tracepanel) watch(asked string) (*gcWindow, *memoryWindow) {
+	gc := watchGC()
+	if asked == "memory" || t.profileMemory {
+		return &gc, measureMemory()
+	}
+	return &gc, nil
 }
 
 // Profile profiles the trace in ctx from here on, as the panel's Profile toggle profiles a request from its start:
@@ -361,6 +395,7 @@ func Profile(ctx context.Context) context.Context {
 	}
 	labeled, tp := t.profiler.start(ctx, rec.doc.ID)
 	rec.profile, rec.byCode = tp, true
+	rec.gc, rec.memory = t.watch(rec.asked)
 	rec.doc.Attrs["profile.reason"] = "code"
 	if rec.asked == "" {
 		// The calls it makes and the tasks it starts from now on ask the same.
