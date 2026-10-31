@@ -17,13 +17,13 @@ gRPC and Kafka are modules of their own, and you get only those you use.
 go get github.com/tracepanel/tracepanel-go
 ```
 
-Give `sql.Open` the driver's name through `tracepanel.WrapDriver`, and wrap
+Give `sql.Open` the driver's name through `tracepanel.Driver`, and wrap
 the app's handler:
 
 ```go
 import tracepanel "github.com/tracepanel/tracepanel-go"
 
-db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
+db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
 // ...
 http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 ```
@@ -42,7 +42,7 @@ gRPC and Kafka take a line each: see [What it records](#what-it-records).
 Tracepanel records in development only, as every Tracepanel SDK does:
 when the app runs under `go run`, with `TRACEPANEL_ENABLED=1`, or with
 `Config.Enabled`. A binary built with `go build` (your production build,
-a container's) records nothing: `WrapHandler`, `WrapDriver` and the rest
+a container's) records nothing: `WrapHandler`, `Driver` and the rest
 hand back what they were given, and no agent is downloaded or started.
 `TRACEPANEL_ENABLED=0` turns it off whatever else says. To record a built
 binary, run it through the SDK's command, which sets
@@ -148,7 +148,7 @@ be told.
 
 ### Databases
 
-`tracepanel.WrapDriver` works wherever a driver's name goes: `sqlx.Open`, or
+`tracepanel.Driver` works wherever a driver's name goes: `sqlx.Open`, or
 GORM's `DriverName`. For a driver's connector, `tracepanel.WrapConnector`
 wraps it for `sql.OpenDB`:
 
@@ -160,7 +160,7 @@ The console runs `EXPLAIN` of a recorded `SELECT` on the database it came
 from. With a second database, name it:
 
 ```go
-replicaDriver := tracepanel.WrapDriver("pgx", tracepanel.DBAlias("replica"))
+replicaDriver := tracepanel.Driver("pgx", tracepanel.DBAlias("replica"))
 replica, err := sql.Open(replicaDriver, replicaDSN)
 ```
 
@@ -219,19 +219,19 @@ error handler within the trace. Pass `c.Request().Context()` down.
 
 ### pgx
 
-The tracer records each statement as `WrapDriver` does, on a `pgx.Conn` or
+The tracer records each statement as `tracepanel.Driver` does, on a `pgx.Conn` or
 a `pgxpool.Pool`:
 
 ```go
 config, err := pgxpool.ParseConfig(dsn)
-config.ConnConfig.Tracer = pgxtrace.New()
+config.ConnConfig.Tracer = pgxtrace.Tracer()
 pool, err := pgxpool.NewWithConfig(ctx, config)
 ```
 
 A transaction's statements go under it. For the rest of its work,
 `pgxtrace.TxContext(ctx, tx)` puts it there too. A batch's queries are
 recorded as they are read, and a `CopyFrom` as one statement.
-`pgxtrace.New` takes the options `WrapDriver` takes (`tracepanel.DBAlias`
+`pgxtrace.Tracer` takes the options `tracepanel.Driver` takes (`tracepanel.DBAlias`
 for a second database), and the console runs `EXPLAIN` on the database a
 query came from.
 
@@ -328,7 +328,7 @@ exits, so its traces reach the agent.
 
 `tracepanel.WrapHandler(mux, tracepanel.Config{...})` and
 `tracepanel.Setup(...)` take a `Config`; with `Enabled`, call `Setup` before
-`WrapDriver`, so the database is recorded too. What it leaves empty comes from the environment:
+`tracepanel.Driver`, so the database is recorded too. What it leaves empty comes from the environment:
 
 | Field | Variable | Default |
 | --- | --- | --- |

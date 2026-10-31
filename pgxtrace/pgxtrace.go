@@ -1,9 +1,9 @@
-// Package pgxtrace records the SQL of pgx v5 (a pgx.Conn or a pgxpool.Pool) as Tracepanel's WrapDriver does for
+// Package pgxtrace records the SQL of pgx v5 (a pgx.Conn or a pgxpool.Pool) as tracepanel.Driver does for
 // database/sql: each statement a `sql` span with its parameters, the rows it returned and the line of the app's
 // code that ran it, and each transaction a span around its statements.
 //
 //	config, err := pgxpool.ParseConfig(dsn)
-//	config.ConnConfig.Tracer = pgxtrace.New()
+//	config.ConnConfig.Tracer = pgxtrace.Tracer()
 //	pool, err := pgxpool.NewWithConfig(ctx, config)
 //
 // A statement is recorded when it runs with the context of a traced request: pool.Query(ctx, ...).
@@ -24,8 +24,8 @@ import (
 	"github.com/tracepanel/tracepanel-go/internal/hook"
 )
 
-// Tracer is a pgx tracer recording statements, batches and copies: the ConnConfig's Tracer.
-type Tracer struct {
+// tracer is a pgx tracer recording statements, batches and copies.
+type tracer struct {
 	db hook.DB
 	// The transaction open on each connection, which its statements go under.
 	txns sync.Map // *pgx.Conn → *openTx
@@ -34,14 +34,15 @@ type Tracer struct {
 }
 
 var (
-	_ pgx.QueryTracer    = (*Tracer)(nil)
-	_ pgx.BatchTracer    = (*Tracer)(nil)
-	_ pgx.CopyFromTracer = (*Tracer)(nil)
+	_ pgx.QueryTracer    = (*tracer)(nil)
+	_ pgx.BatchTracer    = (*tracer)(nil)
+	_ pgx.CopyFromTracer = (*tracer)(nil)
 )
 
-// New is a tracer for a ConnConfig (a pgxpool.Config's ConnConfig), with the database's options as WrapDriver
-// takes them: tracepanel.DBAlias names a second database, tracepanel.DBName the database shown with its queries.
-func New(options ...tracepanel.DBOption) *Tracer {
+// Tracer is the tracer of a ConnConfig (a pgxpool.Config's ConnConfig): it records statements, batches and copies
+// (a pgx.QueryTracer, BatchTracer and CopyFromTracer). It takes the database's options as tracepanel.Driver takes
+// them: tracepanel.DBAlias names a second database, tracepanel.DBName the database shown with its queries.
+func Tracer(options ...tracepanel.DBOption) pgx.QueryTracer {
 	opts := make([]any, len(options))
 	for i, option := range options {
 		opts[i] = option
@@ -50,7 +51,7 @@ func New(options ...tracepanel.DBOption) *Tracer {
 	if db.System == "" {
 		db.System = "postgresql"
 	}
-	return &Tracer{db: db}
+	return &tracer{db: db}
 }
 
 type openTx struct {
@@ -66,7 +67,7 @@ type running struct {
 	control string
 }
 
-func (t *Tracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+func (t *tracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	if !hook.Enabled() {
 		return ctx
 	}
@@ -89,7 +90,7 @@ func (t *Tracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.T
 	return context.WithValue(ctx, queryKey{}, &running{span: span})
 }
 
-func (t *Tracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
+func (t *tracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
 	run, _ := ctx.Value(queryKey{}).(*running)
 	if run == nil {
 		return
@@ -126,14 +127,14 @@ func end(span hook.Span, tag pgconn.CommandTag, err error) {
 }
 
 // begin opens a span of the trace in ctx: under the connection's transaction when it is that trace's.
-func (t *Tracer) begin(ctx context.Context, conn *pgx.Conn, kind, name string, attrs map[string]any) hook.Span {
+func (t *tracer) begin(ctx context.Context, conn *pgx.Conn, kind, name string, attrs map[string]any) hook.Span {
 	if open, ok := t.txns.Load(conn); ok && open.(*openTx).span.SameTrace(ctx) {
 		return open.(*openTx).span.Child(kind, name, attrs)
 	}
 	return hook.Begin(ctx, kind, name, attrs)
 }
 
-func (t *Tracer) endTx(conn *pgx.Conn, outcome string, failed bool) {
+func (t *tracer) endTx(conn *pgx.Conn, outcome string, failed bool) {
 	open, ok := t.txns.LoadAndDelete(conn)
 	if !ok {
 		return
@@ -143,7 +144,7 @@ func (t *Tracer) endTx(conn *pgx.Conn, outcome string, failed bool) {
 	span.End(failed)
 }
 
-func (t *Tracer) attrs() map[string]any {
+func (t *tracer) attrs() map[string]any {
 	return map[string]any{
 		"db.system": t.db.System, "db.vendor": t.db.System, "db.client": "pgx", "db.alias": t.db.Alias,
 		"db.namespace": t.db.Namespace, "code.origin": nilIfEmpty(hook.Origin()),
@@ -152,7 +153,7 @@ func (t *Tracer) attrs() map[string]any {
 
 // remember lets the console run EXPLAIN on the database, through a database/sql pool of the first connection's
 // config: it connects only when the console asks.
-func (t *Tracer) remember(conn *pgx.Conn) {
+func (t *tracer) remember(conn *pgx.Conn) {
 	t.explain.Do(func() {
 		hook.Explain(t.db, sql.OpenDB(stdlib.GetConnector(*conn.Config())))
 	})
@@ -162,7 +163,7 @@ func (t *Tracer) remember(conn *pgx.Conn) {
 
 type batchKey struct{}
 
-func (t *Tracer) TraceBatchStart(ctx context.Context, conn *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+func (t *tracer) TraceBatchStart(ctx context.Context, conn *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
 	if !hook.Enabled() {
 		return ctx
 	}
@@ -172,7 +173,7 @@ func (t *Tracer) TraceBatchStart(ctx context.Context, conn *pgx.Conn, _ pgx.Trac
 
 // TraceBatchQuery records each query of a batch, as it is read: the batch goes to the server at once, so they are
 // db.many, one round trip.
-func (t *Tracer) TraceBatchQuery(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
+func (t *tracer) TraceBatchQuery(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchQueryData) {
 	if ctx.Value(batchKey{}) == nil {
 		return
 	}
@@ -184,9 +185,9 @@ func (t *Tracer) TraceBatchQuery(ctx context.Context, conn *pgx.Conn, data pgx.T
 	}
 }
 
-func (t *Tracer) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
+func (t *tracer) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
 
-func (t *Tracer) TraceCopyFromStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
+func (t *tracer) TraceCopyFromStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
 	if !hook.Enabled() {
 		return ctx
 	}
@@ -206,7 +207,7 @@ func (t *Tracer) TraceCopyFromStart(ctx context.Context, conn *pgx.Conn, data pg
 	return context.WithValue(ctx, queryKey{}, &running{span: span})
 }
 
-func (t *Tracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {
+func (t *tracer) TraceCopyFromEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromEndData) {
 	run, _ := ctx.Value(queryKey{}).(*running)
 	if run == nil || run.span == nil {
 		return
@@ -228,11 +229,11 @@ func TxContext(ctx context.Context, tx pgx.Tx) context.Context {
 	if tx == nil || tx.Conn() == nil {
 		return ctx
 	}
-	tracer, ok := tx.Conn().Config().Tracer.(*Tracer)
+	traced, ok := tx.Conn().Config().Tracer.(*tracer)
 	if !ok {
 		return ctx
 	}
-	open, ok := tracer.txns.Load(tx.Conn())
+	open, ok := traced.txns.Load(tx.Conn())
 	if !ok {
 		return ctx
 	}
@@ -285,7 +286,7 @@ func rewrite(ctx context.Context, conn *pgx.Conn, query string, args []any) (str
 	return query, args
 }
 
-// errorType names a failed statement's error as WrapDriver does: its type.
+// errorType names a failed statement's error as tracepanel.Driver does: its type.
 func errorType(err error) string { return fmt.Sprintf("%T", err) }
 
 func nilIfEmpty(text string) any {

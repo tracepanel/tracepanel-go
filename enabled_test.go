@@ -44,7 +44,7 @@ func TestABuiltBinaryRecordsNothing(t *testing.T) {
 	if handler != http.Handler(mux) || active.Load() != nil {
 		t.Fatal("WrapHandler recorded")
 	}
-	if WrapDriver("pgx") != "pgx" || WrapConnector(connector) != driver.Connector(connector) {
+	if Driver("pgx") != "pgx" || WrapConnector(connector) != driver.Connector(connector) {
 		t.Fatal("the database is wrapped")
 	}
 	if WrapTransport(nil) != http.DefaultTransport || WrapLogHandler(logs) != slog.Handler(logs) {
@@ -120,7 +120,7 @@ func TestGoRunRecordsAndGoBuildDoesnt(t *testing.T) {
 		"go.mod": "module example.com/shop\n\ngo 1.26\n\nrequire github.com/tracepanel/tracepanel-go v0.0.0\n\n" +
 			"replace github.com/tracepanel/tracepanel-go => " + filepath.ToSlash(core) + "\n",
 		"main.go": "package main\n\nimport (\n\t\"fmt\"\n\n\ttracepanel \"github.com/tracepanel/tracepanel-go\"\n)\n\n" +
-			"func main() { fmt.Print(tracepanel.WrapDriver(\"sqlite\")) }\n",
+			"func main() { fmt.Print(tracepanel.Driver(\"sqlite\")) }\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(app, name), []byte(content), 0o644); err != nil {

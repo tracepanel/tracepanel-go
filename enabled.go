@@ -11,7 +11,7 @@ import (
 // Tracepanel records in development only, as every SDK does: when TRACEPANEL_ENABLED=1, when the app's Config says
 // Enabled, or when the app was started by `go run` (or by `tracepanel run`, which sets TRACEPANEL_ENABLED=1). A
 // binary built with `go build` and run as it is (in production, in a container) records nothing: Setup, WrapHandler,
-// WrapDriver and the rest hand back what they were given, and no agent is downloaded or started.
+// Driver and the rest hand back what they were given, and no agent is downloaded or started.
 // TRACEPANEL_ENABLED=0 always wins.
 
 // wanted tells whether Tracepanel records, with the app's Config.

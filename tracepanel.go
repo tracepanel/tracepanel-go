@@ -3,7 +3,7 @@
 // finds the issues (N+1 queries, duplicates, slow SQL), keeps the traces in .tracepanel/ and serves the console. The
 // middleware adds what the badge on a page reads (Server-Timing, Tracepanel-Id) and puts the badge into HTML pages.
 //
-//	db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
+//	db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
 //	http.ListenAndServe(addr, tracepanel.WrapHandler(mux))
 //
 // It has no dependencies, and records nothing until WrapHandler or Setup turns it on, in development only: under
@@ -48,7 +48,7 @@ type Config struct {
 	// The route of a request, for a router that doesn't set Request.Pattern as ServeMux does: "/books/{id}".
 	Route func(*http.Request) string
 	// Record in this build, not only under `go run` or with TRACEPANEL_ENABLED=1: a staging build, say. Set up
-	// before WrapDriver, so the database is recorded too. TRACEPANEL_ENABLED=0 still turns Tracepanel off.
+	// before Driver, so the database is recorded too. TRACEPANEL_ENABLED=0 still turns Tracepanel off.
 	Enabled bool
 	// Profile every trace (where its CPU time went, a flame graph in the console), not only a request that asks
 	// with the panel's Profile toggle: TRACEPANEL_PROFILE=1. TRACEPANEL_PROFILE_ENABLED=0 profiles nothing.

@@ -25,8 +25,8 @@ func ExampleWrapHandler() {
 
 // The database opened through the wrapped driver: each statement run with a request's context is recorded, with
 // the line that ran it.
-func ExampleWrapDriver() {
-	db, err := sql.Open(tracepanel.WrapDriver("pgx"), os.Getenv("DATABASE_URL"))
+func ExampleDriver() {
+	db, err := sql.Open(tracepanel.Driver("pgx"), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -42,9 +42,9 @@ func ExampleWrapDriver() {
 }
 
 // A second database, a replica, named apart, of a kind its driver's name doesn't tell.
-func ExampleWrapDriver_options() {
+func ExampleDriver_options() {
 	replica, err := sql.Open(
-		tracepanel.WrapDriver("pgx", tracepanel.DBAlias("replica"), tracepanel.DBSystem("postgresql")),
+		tracepanel.Driver("pgx", tracepanel.DBAlias("replica"), tracepanel.DBSystem("postgresql")),
 		os.Getenv("REPLICA_URL"),
 	)
 	if err != nil {

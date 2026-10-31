@@ -75,7 +75,7 @@ func connect(t *testing.T, options ...tracepanel.DBOption) *pgx.Conn {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Tracer = New(options...)
+	config.Tracer = Tracer(options...)
 	config.DialFunc = func(context.Context, string, string) (net.Conn, error) {
 		client, server := net.Pipe()
 		go fakeServer(t, server)
@@ -238,13 +238,13 @@ func TestABatchIsManyStatements(t *testing.T) {
 func TestACopy(t *testing.T) {
 	recorder := tracetest.Record(t)
 	conn := connect(t)
-	tracer := conn.Config().Tracer.(*Tracer)
+	traced := conn.Config().Tracer.(*tracer)
 
 	trace := command(t, recorder, func(ctx context.Context) error {
-		ctx = tracer.TraceCopyFromStart(ctx, conn, pgx.TraceCopyFromStartData{
+		ctx = traced.TraceCopyFromStart(ctx, conn, pgx.TraceCopyFromStartData{
 			TableName: pgx.Identifier{"books"}, ColumnNames: []string{"id", "title"},
 		})
-		tracer.TraceCopyFromEnd(ctx, conn, pgx.TraceCopyFromEndData{CommandTag: pgconn.NewCommandTag("COPY 3")})
+		traced.TraceCopyFromEnd(ctx, conn, pgx.TraceCopyFromEndData{CommandTag: pgconn.NewCommandTag("COPY 3")})
 		return nil
 	})
 

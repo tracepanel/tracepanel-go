@@ -22,14 +22,14 @@ import (
 // each transaction a span around its statements. A statement is recorded when it runs with the context of a traced
 // request: db.QueryContext(ctx, ...), not db.Query(...).
 
-// WrapDriver is the name of the driver `name` with its statements recorded, for sql.Open (and sqlx.Open, GORM's
+// Driver is the name of the driver `name` with its statements recorded, for sql.Open (and sqlx.Open, GORM's
 // DriverName, anything that opens by a driver's name):
 //
-//	db, err := sql.Open(tracepanel.WrapDriver("pgx"), dsn)
+//	db, err := sql.Open(tracepanel.Driver("pgx"), dsn)
 //
 // The first call registers it with database/sql, as "tracepanel:pgx". When Tracepanel is off (outside development),
 // it is `name`.
-func WrapDriver(name string, options ...DBOption) string {
+func Driver(name string, options ...DBOption) string {
 	if !records() {
 		return name
 	}
@@ -139,7 +139,7 @@ func (d *tracedDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	return traced(connector, &db), nil
 }
 
-// DBOption tells WrapDriver or WrapConnector more about the database.
+// DBOption tells Driver or WrapConnector more about the database.
 type DBOption func(*database)
 
 // DBAlias names the database among the app's ("default"): a second one, such as a replica, gets a name of its own.
@@ -213,7 +213,7 @@ func remember(db *database) {
 	databases[db.alias] = db
 }
 
-// hasDatabases: the app opened a database through WrapDriver or WrapConnector, which EXPLAIN can run on.
+// hasDatabases: the app opened a database through Driver or WrapConnector, which EXPLAIN can run on.
 func hasDatabases() bool {
 	databasesMu.Lock()
 	defer databasesMu.Unlock()

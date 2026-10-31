@@ -44,7 +44,7 @@ func TestTheAgentGetsTheHelloTheTracesAndAnEXPLAINOnTheAppsDatabase(t *testing.T
 	fake.reset()
 	t.Setenv("TRACEPANEL_N_PLUS_ONE_THRESHOLD", "5")
 	t.Setenv("TRACEPANEL_AGENT", "")
-	if _, err := sql.Open(WrapDriver("fakedb", DBAlias("reports")), "shop"); err != nil {
+	if _, err := sql.Open(Driver("fakedb", DBAlias("reports")), "shop"); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := os.MkdirTemp("", "tp")
@@ -199,7 +199,7 @@ func TestExplainIsOfferedOnceADatabaseIsWrapped(t *testing.T) {
 
 	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY5", Kind: "http", Attrs: attrMap{}})
 	before := hello()
-	if _, err := sql.Open(WrapDriver("fakedb", DBAlias("later")), "shop"); err != nil {
+	if _, err := sql.Open(Driver("fakedb", DBAlias("later")), "shop"); err != nil {
 		t.Fatal(err)
 	}
 	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY6", Kind: "http", Attrs: attrMap{}})

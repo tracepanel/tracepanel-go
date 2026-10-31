@@ -81,7 +81,7 @@ func equalJSON(got, want any) bool {
 
 func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 	recorded := record(t)
-	db, err := sql.Open(WrapDriver("fakedb"), "shop")
+	db, err := sql.Open(Driver("fakedb"), "shop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestAStreamGoesOutAsItIsWrittenWithTheTracesHeaders(t *testing.T) {
 
 func TestAStatementTheDriverDeclinesIsRecordedOnceAsItRan(t *testing.T) {
 	recorded := record(t)
-	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
+	db, _ := sql.Open(Driver("fakedb"), "shop")
 	fake.skipQueries = true
 
 	err := Command(context.Background(), "report", func(ctx context.Context) error {
@@ -268,7 +268,7 @@ func TestAStatementTheDriverDeclinesIsRecordedOnceAsItRan(t *testing.T) {
 
 func TestACommandsErrorFailsItsTrace(t *testing.T) {
 	recorded := record(t)
-	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
+	db, _ := sql.Open(Driver("fakedb"), "shop")
 
 	err := Command(context.Background(), "migrate", func(ctx context.Context) error {
 		_, err := db.ExecContext(ctx, "INSERT INTO missing VALUES (1)")
@@ -309,9 +309,9 @@ func TestATaskIsATraceLinkedToTheRequestThatStartedIt(t *testing.T) {
 }
 
 func TestADriverIsRegisteredOnceUnderItsOwnName(t *testing.T) {
-	first, again, replica := WrapDriver("fakedb"), WrapDriver("fakedb"), WrapDriver("fakedb", DBAlias("replica"))
+	first, again, replica := Driver("fakedb"), Driver("fakedb"), Driver("fakedb", DBAlias("replica"))
 	t.Setenv("TRACEPANEL_ENABLED", "0")
-	off := WrapDriver("fakedb")
+	off := Driver("fakedb")
 
 	if first != "tracepanel:fakedb" || again != first || replica != "tracepanel:fakedb:replica" || off != "fakedb" {
 		t.Fatalf("%q, %q, %q, off %q", first, again, replica, off)
@@ -331,7 +331,7 @@ func TestTheMiddlewareOfATracepanelThatIsOffIsTheHandler(t *testing.T) {
 
 func TestCallsMadeWithATransactionsContextGoUnderIt(t *testing.T) {
 	recorded := record(t)
-	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
+	db, _ := sql.Open(Driver("fakedb"), "shop")
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer other.Close()
 	client := &http.Client{Transport: WrapTransport(nil)}
@@ -372,7 +372,7 @@ func TestCallsMadeWithATransactionsContextGoUnderIt(t *testing.T) {
 
 func TestTheContextOfATransactionOutsideATraceIsTheContext(t *testing.T) {
 	record(t)
-	db, _ := sql.Open(WrapDriver("fakedb"), "shop")
+	db, _ := sql.Open(Driver("fakedb"), "shop")
 	ctx := context.Background()
 	tx, _ := db.BeginTx(ctx, nil)
 	defer tx.Rollback()

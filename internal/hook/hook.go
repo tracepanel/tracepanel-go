@@ -90,7 +90,7 @@ var (
 	Origin func() string
 	// Database is the database tracepanel.DBOption values describe.
 	Database func(options []any) DB
-	// Statement is a SQL statement's span name and attributes, as WrapDriver records them; `client` names the library.
+	// Statement is a SQL statement's span name and attributes, as tracepanel.Driver records them; `client` names the library.
 	Statement func(db DB, client, query string, params []any) (string, map[string]any)
 	// Explain lets the console run EXPLAIN on db's queries through sqlDB.
 	Explain func(db DB, sqlDB *sql.DB)

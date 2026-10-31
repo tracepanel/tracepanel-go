@@ -1,6 +1,6 @@
 //go:build !windows
 
-// Package e2e runs a Go app against the real agent: WrapHandler and WrapDriver on SQLite, a page with an N+1, and the
+// Package e2e runs a Go app against the real agent: WrapHandler and tracepanel.Driver on SQLite, a page with an N+1, and the
 // agent's API read back, its trace, its SQL spans and the n+1 issue; then a request asked to be profiled, its
 // profile and what it carried (the Request tab). The agent is TRACEPANEL_AGENT_BIN, else a build
 // of the agent's repository next to this one, else the one the SDK downloads (cmd/tracepanel runs it); without any,
@@ -197,7 +197,7 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	t.Setenv("TRACEPANEL_DIR", dir)
 	t.Setenv("TRACEPANEL_AGENT", "")
 	t.Setenv("TRACEPANEL_SERVICE", "e2e-shop")
-	db, err := sql.Open(tracepanel.WrapDriver("sqlite"), filepath.Join(t.TempDir(), "shop.db"))
+	db, err := sql.Open(tracepanel.Driver("sqlite"), filepath.Join(t.TempDir(), "shop.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

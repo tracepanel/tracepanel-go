@@ -8,7 +8,7 @@ Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
 
 Records only in development, as the other SDKs do: under `go run`, with
 `TRACEPANEL_ENABLED=1` or with `Config.Enabled`. A binary `go build`
-wrote records nothing, and its `WrapHandler`, `WrapDriver` and the rest
+wrote records nothing, and its `WrapHandler`, `Driver` and the rest
 hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
 
 ### Added
@@ -20,7 +20,7 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   pages. Only a page is held for the badge: any other response (JSON, a
   file, a stream) goes out as it is written, and `http.ResponseController`
   reaches the connection.
-- `sql.Open(tracepanel.WrapDriver("pgx"), dsn)`, and
+- `sql.Open(tracepanel.Driver("pgx"), dsn)`, and
   `tracepanel.WrapConnector` for `sql.OpenDB`: each statement with its
   parameters, the rows it returned and the line that ran it, and each
   transaction, so the agent finds N+1 queries, duplicates and slow
@@ -65,8 +65,8 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
     handler a `view` span (not on Echo v5, which doesn't tell it), an
     error a handler returns answered by Echo's error handler inside the
     trace, and the badge naming the router (`Go 1.27 · gin`).
-  - `pgxtrace.New()`, pgx v5's tracer on a `pgx.Conn` or a `pgxpool.Pool`:
-    each statement, batch, copy and transaction as `WrapDriver` records
+  - `pgxtrace.Tracer()`, pgx v5's tracer on a `pgx.Conn` or a `pgxpool.Pool`:
+    each statement, batch, copy and transaction as `tracepanel.Driver` records
     them, `EXPLAIN` from the console, and `pgxtrace.TxContext` for the
     rest of a transaction's work.
   - `redistrace.Instrument(rdb)`, go-redis v9: each command a span with
