@@ -62,6 +62,18 @@ func agent(t *testing.T, dir string) string {
 	t.Cleanup(func() {
 		killGroup(cmd)
 		<-exited
+		// The agent under it may still be exiting (Windows ends a process tree a process at a time), and holds its
+		// store until it has: its files are removed once it let them go, before the test's TempDir cleanup.
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+			err := os.RemoveAll(dir)
+			if err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("the agent's store is still held: %v", err)
+				return
+			}
+		}
 	})
 	deadline := time.After(2 * time.Minute)
 	for {
@@ -241,6 +253,10 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Its connections closed with the test's, so the database file can be removed (Windows keeps an open file).
+	if pool, err := orm.DB(); err == nil {
+		defer pool.Close()
+	}
 	if err := orm.Use(gormtrace.Plugin()); err != nil {
 		t.Fatal(err)
 	}
@@ -271,6 +287,7 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	}
 	get(t, console, "traces", &listed)
 	var app struct {
+		Agent    string         `json:"agent"`
 		Settings map[string]any `json:"settings"`
 		Versions []struct {
 			Name string `json:"name"`
@@ -326,7 +343,42 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	}
 
 	profiledReport(t, server, console)
-	gormNPlusOne(t, server, console)
+	gormNPlusOne(t, server, console, app.Agent)
+}
+
+// atLeast tells whether an agent's version ("0.9.5", "0.10.0-rc.1") is `want`'s or later, by its numbers.
+func atLeast(version, want string) bool {
+	number := func(v string) []int {
+		v, _, _ = strings.Cut(v, "-")
+		var parts []int
+		for _, part := range strings.Split(v, ".") {
+			n := 0
+			fmt.Sscan(part, &n)
+			parts = append(parts, n)
+		}
+		return parts
+	}
+	have, need := number(version), number(want)
+	for i := range need {
+		got := 0
+		if i < len(have) {
+			got = have[i]
+		}
+		if got != need[i] {
+			return got > need[i]
+		}
+	}
+	return true
+}
+
+func TestAtLeast(t *testing.T) {
+	for version, want := range map[string]bool{
+		"0.10.0": true, "0.10.1": true, "1.0.0": true, "0.10.0-rc.1": true, "0.9.5": false, "0.9.10": false, "": false,
+	} {
+		if got := atLeast(version, "0.10.0"); got != want {
+			t.Errorf("atLeast(%q, 0.10.0) = %v", version, got)
+		}
+	}
 }
 
 type author struct {
@@ -367,8 +419,9 @@ func gormAuthors(db *gorm.DB) http.HandlerFunc {
 }
 
 // gormNPlusOne: the N+1 through GORM reaches the agent as the plugin records it (db.client gorm, the rows each
-// query returned), and the agent's issue names GORM's fix.
-func gormNPlusOne(t *testing.T, server *httptest.Server, console string) {
+// query returned), and the agent's issue names GORM's fix: from agent 0.10.0 on; an agent before it gives every ORM
+// the generic hint (a build of the agent's main between releases may name GORM's already).
+func gormNPlusOne(t *testing.T, server *httptest.Server, console, agentVersion string) {
 	t.Helper()
 	response, err := http.Get(server.URL + "/gorm/authors")
 	if err != nil {
@@ -410,8 +463,11 @@ func gormNPlusOne(t *testing.T, server *httptest.Server, console string) {
 		}
 		hinted = append(hinted, fmt.Sprintf("%s ×%d: %s", issue.Kind, issue.Count, hint))
 	}
-	if len(hinted) != 1 || !strings.HasPrefix(hinted[0], "n+1 ×5: ") || !strings.Contains(hinted[0], "`Preload()`") {
-		t.Fatalf("issues %q", hinted)
+	gormHint := len(hinted) == 1 && strings.HasPrefix(hinted[0], "n+1 ×5: ") && strings.Contains(hinted[0], "`Preload()`")
+	genericHint := len(hinted) == 1 && hinted[0] ==
+		"n+1 ×5: Load the related rows with the parent rows (a join, or one batched query) instead of one query per row."
+	if atLeast(agentVersion, "0.10.0") && !gormHint || !atLeast(agentVersion, "0.10.0") && !gormHint && !genericHint {
+		t.Fatalf("agent %q, issues %q", agentVersion, hinted)
 	}
 }
 
