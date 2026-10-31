@@ -32,7 +32,8 @@ import (
 //
 // It always prints, also when Tracepanel isn't recording. When ctx carries a trace, the dump is recorded too, a log
 // record on its current span that the console shows in the call tree. A value whose expression names a secret
-// (password, token, api_key) is masked, printed and recorded.
+// (password, token, api_key) is masked, printed and recorded, and so is a value inside one under such a name: a
+// struct's field (Password, APIKey), a map's key ("token").
 func Dump(ctx context.Context, values ...any) {
 	pc, file, line, ok := runtime.Caller(1)
 	function := ""
@@ -398,7 +399,11 @@ func (p *printer) structure(v reflect.Value, depth int) {
 		}
 		name := t.Field(i).Name
 		p.write(indent + name + ":" + strings.Repeat(" ", width-len(name)+1))
-		p.value(v.Field(i), depth+1)
+		if secret.MatchString(name) {
+			p.write(mask)
+		} else {
+			p.value(v.Field(i), depth+1)
+		}
 		p.write(",\n")
 	}
 	p.write(strings.Repeat("    ", depth) + "}")
@@ -453,9 +458,21 @@ func (p *printer) mapping(v reflect.Value, depth int) {
 		if p.full() {
 			break
 		}
-		items = append(items, p.nested(k, depth+1)+": "+p.nested(v.MapIndex(k), depth+1))
+		value := mask
+		if !secretKey(k) {
+			value = p.nested(v.MapIndex(k), depth+1)
+		}
+		items = append(items, p.nested(k, depth+1)+": "+value)
 	}
 	p.items(t, items, depth)
+}
+
+// secretKey: a map's key names a secret ("password", "api_key"), as a struct's field may.
+func secretKey(k reflect.Value) bool {
+	if k.Kind() == reflect.Interface && !k.IsNil() {
+		k = k.Elem()
+	}
+	return k.Kind() == reflect.String && secret.MatchString(k.String())
 }
 
 // nested is a value's text, printed apart: an element of a list or a map.
