@@ -1,14 +1,23 @@
 .DEFAULT_GOAL := lint
-.PHONY: lint fmt test tidy e2e integrity
+.PHONY: lint fmt test tidy e2e integrity cross
 
 # The core module, then each integration's: a module of its own, tagged <dir>/vX.Y.Z at a release.
 MODULES := . pgxtrace gormtrace gintrace echotrace echo5trace redistrace zaptrace zerologtrace grpctrace kafkatrace
 
-lint: ## gofmt, go vet and the tests of every module, as CI runs them
+lint: ## gofmt, go vet and the tests of every module, as CI runs them; every module built for Windows
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 	@for module in $(MODULES); do \
 		echo "== $$module"; \
 		(cd $$module && go vet ./... && go test -race ./...) || exit 1; \
+	done
+	@$(MAKE) --no-print-directory cross
+
+cross: ## Every module (e2e too) vetted and built for Windows, amd64 and arm64
+	@for arch in amd64 arm64; do \
+		for module in $(MODULES) e2e; do \
+			echo "== windows/$$arch $$module"; \
+			(cd $$module && GOOS=windows GOARCH=$$arch go vet ./... && GOOS=windows GOARCH=$$arch go build ./...) || exit 1; \
+		done; \
 	done
 
 test: ## The tests of every module

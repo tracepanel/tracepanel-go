@@ -132,6 +132,11 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   it is checked again the first time a process runs it.
 - A trace keeps at most 2,000 spans and 1,000 log records, as the agent
   stores it, and counts the rest.
+- Linux, macOS and Windows: CI runs the tests and an app against the real
+  agent on Windows too (`go run`'s binaries in `%TEMP%\go-build…` and the
+  build cache, the agent's `.exe` downloaded into `%LOCALAPPDATA%` and
+  started in a process group of its own), and builds every module for
+  Windows on amd64 and arm64; a release waits for Windows' jobs.
 
 The SDK records on its own and has no dependencies: no OpenTelemetry. An
 integration depends on its library only.

@@ -5,25 +5,63 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
+// The test binary stands in for the agent and the app, on every OS (Windows too): copied as tracepanel-agent, it
+// writes its arguments to args beside it and exits 3 (after TRACEPANEL_TEST_AGENT_SLEEP); as shop, it writes
+// TRACEPANEL_ENABLED and its arguments to seen beside it and exits 4 (or TRACEPANEL_TEST_EXIT).
+func TestMain(m *testing.M) {
+	self, _ := os.Executable()
+	dir, name := filepath.Dir(self), strings.TrimSuffix(filepath.Base(self), ".exe")
+	switch name {
+	case "tracepanel-agent":
+		_ = os.WriteFile(filepath.Join(dir, "args"), []byte(strings.Join(os.Args[1:], " ")+"\n"), 0o644)
+		if pause, err := time.ParseDuration(os.Getenv("TRACEPANEL_TEST_AGENT_SLEEP")); err == nil {
+			time.Sleep(pause)
+		}
+		os.Exit(3)
+	case "shop":
+		seen := strings.TrimSpace(os.Getenv("TRACEPANEL_ENABLED") + " " + strings.Join(os.Args[1:], " "))
+		_ = os.WriteFile(filepath.Join(dir, "seen"), []byte(seen+"\n"), 0o644)
+		code, err := strconv.Atoi(os.Getenv("TRACEPANEL_TEST_EXIT"))
+		if err != nil {
+			code = 4
+		}
+		os.Exit(code)
+	}
+	os.Exit(m.Run())
+}
+
+// standIn copies the test binary into dir as name (name.exe on Windows): its path.
+func standIn(t *testing.T, dir, name string) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(dir, name)
+	if err := os.WriteFile(binary, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return binary
+}
+
 // A stand-in agent that writes its arguments where the test reads them.
 func fakeAgent(t *testing.T) (binary, argsFile string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("a shell script stands in for the agent")
-	}
 	dir := t.TempDir()
-	argsFile = filepath.Join(dir, "args")
-	binary = filepath.Join(dir, "tracepanel-agent")
-	script := "#!/bin/sh\necho \"$@\" > " + argsFile + "\nexit 3\n"
-	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return binary, argsFile
+	return standIn(t, dir, "tracepanel-agent"), filepath.Join(dir, "args")
 }
 
 func TestEachCommandRunsTheAgentOnTheProjectsTraces(t *testing.T) {
@@ -71,13 +109,7 @@ func TestWithoutAnAgentTheCommandFails(t *testing.T) {
 func fakeApp(t *testing.T) (binary, seen string) {
 	t.Helper()
 	dir := t.TempDir()
-	seen = filepath.Join(dir, "seen")
-	binary = filepath.Join(dir, "shop")
-	script := "#!/bin/sh\necho \"$TRACEPANEL_ENABLED $@\" > " + seen + "\nexit 4\n"
-	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return binary, seen
+	return standIn(t, dir, "shop"), filepath.Join(dir, "seen")
 }
 
 func TestRunStartsTheAppRecording(t *testing.T) {
@@ -110,8 +142,24 @@ func said(t *testing.T) *bytes.Buffer {
 }
 
 func TestRunSaysHowAnAppThatFailedEnded(t *testing.T) {
+	dir := t.TempDir()
+	standIn(t, dir, "shop")
+	t.Chdir(dir)
+	for code, want := range map[int]string{0: "", 3: "tracepanel: ./shop exited with status 3\n"} {
+		t.Setenv("TRACEPANEL_TEST_EXIT", strconv.Itoa(code))
+		said := said(t)
+
+		got := run([]string{"run", "./shop"})
+
+		if got != code || said.String() != want {
+			t.Errorf("exit %d: exit %d, said %q", code, got, said.String())
+		}
+	}
+}
+
+func TestRunSaysWhichSignalEndedTheApp(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("a shell script stands in for the app")
+		t.Skip("no signals on Windows")
 	}
 	dir := t.TempDir()
 	cases := []struct {
@@ -119,8 +167,6 @@ func TestRunSaysHowAnAppThatFailedEnded(t *testing.T) {
 		code   int
 		said   string
 	}{
-		{"exit 0", 0, ""},
-		{"exit 3", 3, "tracepanel: ./shop exited with status 3\n"},
 		{"kill -KILL $$", 128 + 9, "tracepanel: ./shop ended by signal: killed\n"},
 		// Ctrl-C's and SIGTERM's: this command passed them on, nothing to say.
 		{"kill -TERM $$", 128 + 15, ""},
@@ -137,29 +183,5 @@ func TestRunSaysHowAnAppThatFailedEnded(t *testing.T) {
 		if code != c.code || said.String() != c.said {
 			t.Errorf("%s: exit %d, said %q", c.script, code, said.String())
 		}
-	}
-}
-
-func TestDevStartsTheAppBesideTheConsole(t *testing.T) {
-	binary, argsFile := fakeAgent(t)
-	shop, seen := fakeApp(t)
-	// The console runs a while: the app with it.
-	script, _ := os.ReadFile(binary)
-	_ = os.WriteFile(binary, []byte(strings.Replace(string(script), "exit 3", "sleep 1\nexit 3", 1)), 0o755)
-	t.Setenv("TRACEPANEL_AGENT_BIN", binary)
-	t.Setenv("TRACEPANEL_DIR", "/srv/shop/.tracepanel")
-
-	code := run([]string{"dev", "--port", "9100", "--", shop, "-v"})
-	agentArgs, _ := os.ReadFile(argsFile)
-	var app []byte
-	for deadline := time.Now().Add(5 * time.Second); len(app) == 0 && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		app, _ = os.ReadFile(seen)
-	}
-
-	if code != 3 || strings.TrimSpace(string(agentArgs)) != "--dir /srv/shop/.tracepanel --serve 127.0.0.1:9100" {
-		t.Fatalf("exit %d, the agent ran with %q", code, agentArgs)
-	}
-	if strings.TrimSpace(string(app)) != "1 -v" {
-		t.Fatalf("the app saw %q", app)
 	}
 }

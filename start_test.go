@@ -1,10 +1,12 @@
 package tracepanel
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +43,48 @@ func TestNoAgentToStart(t *testing.T) {
 	t.Setenv("TRACEPANEL_AGENT", "off")
 	if autoStart() {
 		t.Fatal("off, yet started")
+	}
+}
+
+// fakeAgent is what the test binary does as the agent: it says how it was started on its output (the agent's log),
+// and where it listens, as the agent writes it into its directory, and exits.
+func fakeAgent(args []string) {
+	fmt.Println("fake agent:", strings.Join(args, " "))
+	for i, arg := range args {
+		if arg == "--dir" && i+1 < len(args) {
+			_ = os.WriteFile(filepath.Join(args[i+1], "console.addr"), []byte("http://127.0.0.1:9/\n"), 0o644)
+			_ = os.WriteFile(filepath.Join(args[i+1], "agent.addr"), []byte("tcp:127.0.0.1:9\n"), 0o644)
+		}
+	}
+}
+
+// The agent starts as every OS has it (Windows too: a process group of its own, without the app's console), with its
+// arguments, its output in agent.log, the store's directory made for it.
+func TestTheAgentStartsDetachedWithItsLog(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TRACEPANEL_AGENT", "")
+	t.Setenv("TRACEPANEL_AGENT_BIN", executable)
+	t.Setenv("TRACEPANEL_TEST_FAKE_AGENT", "1")
+	dir := filepath.Join(t.TempDir(), "shop", ".tracepanel")
+	s := &starter{storeDir: dir}
+
+	started := s.ensure()
+	var log []byte
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if log, _ = os.ReadFile(filepath.Join(dir, "agent.log")); len(log) > 0 {
+			break
+		}
+	}
+
+	want := "fake agent: --dir " + dir + " --serve 127.0.0.1:0 --idle-exit 1800\n"
+	if !started || strings.ReplaceAll(string(log), "\r\n", "\n") != want {
+		t.Fatalf("started %v, agent.log %q, want %q", started, log, want)
+	}
+	if got := (&console{storeDir: dir}).URL(); got != "http://127.0.0.1:9/" {
+		t.Fatalf("console %q", got)
 	}
 }
 

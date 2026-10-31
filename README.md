@@ -76,7 +76,9 @@ without a network the SDK runs `tracepanel-agent` from the `PATH`.
 The SDK and the agent share a minor version: Tracepanel for Go 0.10.x runs
 `tracepanel-agent` 0.10.x.
 
-Go 1.26 or later.
+Go 1.26 or later, on Linux, macOS and Windows (`go run`'s binaries are
+told apart there too, and the agent is the `.exe` of its win32 package,
+kept in `%LOCALAPPDATA%\tracepanel\`).
 
 ## What it records
 
@@ -478,7 +480,8 @@ app beside it, recording), a built app recording (`tracepanel run
 ## Development
 
 ```bash
-make lint       # gofmt, go vet, the tests of every module
+make lint       # gofmt, go vet, the tests of every module, every module built for Windows
+make cross      # every module vetted and built for Windows, amd64 and arm64
 make e2e        # an app against the real agent (e2e/, a module of its own)
 make integrity  # the checksums of AgentVersion's binaries, once it is on npm
 ```
