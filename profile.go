@@ -23,12 +23,15 @@ import (
 // requests at once: no sample of another request is taken for this one. The profile is the CPU's time only: a
 // goroutine waiting (for the database, a lock, a sleep) isn't sampled.
 //
-// The profiler runs while a profiled trace does. It hands its samples over only once stopped, so when a profiled
-// trace ends, it is stopped, its samples go to every profiled trace (the ended ones get their profile, the running
-// ones keep theirs), and it starts again for those still running. Meanwhile a trace's profile is being cut, its
-// document waits (in the background: the response has gone). While it stops (on macOS up to 100 ms, as runtime/pprof
-// reads its samples there; on Linux at once), the traces still running aren't sampled. Samples the profiler lost (its
-// buffer full) can't be told apart: each trace profiled then counts them as `dropped`.
+// The profiler runs while profiled traces do. runtime/pprof hands its samples over only once stopped, so it is cut
+// now and then: stopped, its samples shared out (the ended traces get their profile, the running ones keep theirs),
+// and started again for those still running. Stopping takes a while (on macOS up to 100 ms, as runtime/pprof reads
+// its samples every 100 ms there; on Linux at once), when nothing is sampled, so it isn't stopped as each trace ends:
+// a cut waits until no profiled trace has run for 200 ms, or, under steady load, until an ended trace has waited 2 s
+// for its profile. Back-to-back traces are sampled without a gap. A trace that runs during a cut misses that time,
+// and says so (tracepanel.profile_gap_ms). Meanwhile a trace's profile waits for its cut, its document waits (in the
+// background: the response has gone). Samples the profiler lost (its buffer full) can't be told apart: each trace
+// profiled then counts them as `dropped`.
 //
 // Memory isn't profiled: Go's heap profile is the process's, its samples carry no labels, so what one request
 // allocated can't be told, and the app doesn't say profile_memory.
@@ -78,30 +81,63 @@ type traceProfile struct {
 	dropped int64
 	// The profiler couldn't run while it did (another CPU profile had it).
 	missed bool
-	done   func(*profileDoc)
+	// Ended: its profile waits for the next cut.
+	ended   bool
+	endedAt time.Time
+	// While the profiler was stopped for a cut and the trace ran: since when (zero while it runs), and in all.
+	pausedAt time.Time
+	gap      time.Duration
+	done     func(*profileDoc, time.Duration)
 }
 
 // profiler runs the process's CPU profile while traces are profiled, and shares its samples out among them.
+//
+// runtime/pprof hands a profile's samples over only once it is stopped, and stopping it takes a while (on macOS up to
+// 100 ms: its writer reads the samples every 100 ms there), during which nothing is sampled. So the profile isn't
+// stopped when a trace ends: it runs on, for the traces still running and those starting next, and is cut (stopped,
+// its samples shared out, started again for the traces running) once no profiled trace has run for cutIdle, or, while
+// they keep running, once an ended trace has waited cutWait for its profile. Back-to-back traces are sampled without
+// a gap; only a trace that runs while a cut stops the profiler misses that time, and says how much
+// (tracepanel.profile_gap_ms).
 type profiler struct {
 	mu      sync.Mutex
 	running bool
 	cutting bool
 	out     *bytes.Buffer
-	traces  map[string]*traceProfile
-	ending  []*traceProfile
-	// Profiles being cut: Flush waits for them.
-	pending sync.WaitGroup
+	// Every profiled trace whose profile isn't cut yet: those running and those ended.
+	traces map[string]*traceProfile
+	// The traces running, and those ended, in the order they ended.
+	live   int
+	ending []*traceProfile
+	// When the last profiled trace ended, and the cut waiting for its time.
+	lastEnd time.Time
+	timer   *time.Timer
+	// Which arming of the timer is current: a timer stopped too late to keep it from firing is let be.
+	armed int
+	// The ended traces whose profile isn't handed over yet, and what Flush waits on until there is none.
+	pending int
+	drained chan struct{}
 	warned  bool
 	// What starts and stops the CPU profile: runtime/pprof's, the tests' own.
 	startCPU func(*bytes.Buffer) error
 	stopCPU  func()
+	// How long the profile runs on after the last profiled trace ended, and the longest an ended trace waits for
+	// its profile while others keep running.
+	cutIdle, cutWait time.Duration
 }
+
+const (
+	defaultCutIdle = 200 * time.Millisecond
+	defaultCutWait = 2 * time.Second
+)
 
 func newProfiler() *profiler {
 	return &profiler{
 		traces:   map[string]*traceProfile{},
 		startCPU: func(out *bytes.Buffer) error { return pprof.StartCPUProfile(out) },
 		stopCPU:  pprof.StopCPUProfile,
+		cutIdle:  defaultCutIdle,
+		cutWait:  defaultCutWait,
 	}
 }
 
@@ -111,11 +147,16 @@ func (p *profiler) start(ctx context.Context, id string) (context.Context, *trac
 	tp := &traceProfile{id: id, stacks: map[string]*profileStack{}, index: map[cpuFrame]int{}}
 	p.mu.Lock()
 	p.traces[id] = tp
-	if !p.running && !p.cutting {
+	p.live++
+	switch {
+	case p.cutting:
+		// The profiler is being stopped for a cut: the trace is sampled once it starts again.
+		tp.pausedAt = time.Now()
+	case !p.running:
 		p.begin()
-	}
-	if !p.running && !p.cutting {
-		tp.missed = true
+		if !p.running {
+			tp.missed = true
+		}
 	}
 	p.mu.Unlock()
 	return pprof.WithLabels(ctx, pprof.Labels(profileLabel, id)), tp
@@ -138,62 +179,137 @@ func (p *profiler) begin() {
 	p.running = true
 }
 
-// end ends a trace's profile: done gets it once the profiler handed its samples over, in another goroutine.
-func (p *profiler) end(tp *traceProfile, done func(*profileDoc)) {
-	p.pending.Add(1)
+// end ends a trace's profile: done gets it (and how long the profiler was stopped while the trace ran) once a cut
+// handed its samples over, in another goroutine.
+func (p *profiler) end(tp *traceProfile, done func(*profileDoc, time.Duration)) {
 	p.mu.Lock()
-	tp.done = done
-	p.ending = append(p.ending, tp)
-	if !p.cutting {
-		p.cutting = true
-		go p.cut()
+	defer p.mu.Unlock()
+	p.pending++
+	now := time.Now()
+	tp.done, tp.ended, tp.endedAt = done, true, now
+	if !tp.pausedAt.IsZero() {
+		tp.gap += now.Sub(tp.pausedAt)
+		tp.pausedAt = time.Time{}
 	}
+	p.live--
+	p.lastEnd = now
+	p.ending = append(p.ending, tp)
+	if p.live == 0 {
+		// The last one running: the cut is cutIdle from now, not when the ones before it would have had theirs.
+		p.disarm()
+	}
+	if !p.cutting {
+		p.schedule(p.cutIdle)
+	}
+}
+
+// disarm stops the cut's timer (the caller holds the lock).
+func (p *profiler) disarm() {
+	if p.timer != nil {
+		p.timer.Stop()
+		p.timer = nil
+		p.armed++
+	}
+}
+
+// schedule arms the cut's timer, unless it is armed already (the caller holds the lock).
+func (p *profiler) schedule(after time.Duration) {
+	if p.timer == nil {
+		p.armed++
+		armed := p.armed
+		p.timer = time.AfterFunc(after, func() { p.due(armed) })
+	}
+}
+
+// due is the cut's time, or not yet: while profiled traces run, the ended ones wait (cutWait at most); once none
+// runs, the profile runs on for cutIdle, for the next trace.
+func (p *profiler) due(armed int) {
+	p.mu.Lock()
+	if armed != p.armed {
+		p.mu.Unlock()
+		return
+	}
+	p.timer = nil
+	if p.cutting || len(p.ending) == 0 {
+		p.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	if waited := now.Sub(p.ending[0].endedAt); p.live > 0 && waited < p.cutWait {
+		p.schedule(p.cutWait - waited)
+		p.mu.Unlock()
+		return
+	}
+	if idle := now.Sub(p.lastEnd); p.live == 0 && idle < p.cutIdle {
+		p.schedule(p.cutIdle - idle)
+		p.mu.Unlock()
+		return
+	}
+	p.cutting = true
 	p.mu.Unlock()
+	p.cut()
 }
 
 // cut stops the profile, shares its samples out, gives the ended traces their profiles, and starts it again for the
 // traces still running.
 func (p *profiler) cut() {
-	for {
-		p.mu.Lock()
-		batch := p.ending
-		p.ending = nil
-		if len(batch) == 0 {
-			p.cutting = false
-			p.mu.Unlock()
-			return
-		}
-		wasRunning, out := p.running, p.out
-		p.running, p.out = false, nil
-		p.mu.Unlock()
-
-		var parsed *cpuProfile
-		if wasRunning {
-			p.stopCPU()
-			parsed, _ = parseCPUProfile(out.Bytes(), profileLabel)
-		}
-
-		p.mu.Lock()
-		if parsed != nil {
-			p.share(parsed)
-		}
-		for _, tp := range batch {
-			delete(p.traces, tp.id)
-		}
-		if len(p.traces) > 0 {
-			p.begin()
-		}
-		p.mu.Unlock()
-
-		for _, tp := range batch {
-			if tp.missed {
-				tp.done(nil)
-			} else {
-				tp.done(tp.document(parsed))
-			}
-			p.pending.Done()
+	p.mu.Lock()
+	batch := p.ending
+	p.ending = nil
+	wasRunning, out := p.running, p.out
+	p.running, p.out = false, nil
+	stopped := time.Now()
+	for _, tp := range p.traces {
+		if !tp.ended && tp.pausedAt.IsZero() {
+			tp.pausedAt = stopped
 		}
 	}
+	p.mu.Unlock()
+
+	var parsed *cpuProfile
+	if wasRunning {
+		p.stopCPU()
+		parsed, _ = parseCPUProfile(out.Bytes(), profileLabel)
+	}
+
+	p.mu.Lock()
+	if parsed != nil {
+		p.share(parsed)
+	}
+	for _, tp := range batch {
+		delete(p.traces, tp.id)
+	}
+	if p.live > 0 {
+		p.begin()
+	}
+	now := time.Now()
+	for _, tp := range p.traces {
+		if !tp.ended && !tp.pausedAt.IsZero() {
+			tp.gap += now.Sub(tp.pausedAt)
+			tp.pausedAt = time.Time{}
+		}
+	}
+	p.cutting = false
+	if len(p.ending) > 0 {
+		// Traces that ended during the cut: theirs is the next.
+		p.schedule(p.cutIdle)
+	}
+	p.mu.Unlock()
+
+	for _, tp := range batch {
+		if tp.missed {
+			tp.done(nil, tp.gap)
+		} else {
+			tp.done(tp.document(parsed), tp.gap)
+		}
+	}
+	p.mu.Lock()
+	p.pending -= len(batch)
+	if p.pending == 0 && p.drained != nil {
+		close(p.drained)
+		p.drained = nil
+	}
+	p.mu.Unlock()
 }
 
 // share gives each profiled trace the samples carrying its label, and each the samples the profiler lost.
@@ -217,15 +333,25 @@ func lostSample(function string) bool {
 	return function == "runtime/pprof.lostProfileEvent" || strings.HasPrefix(function, "runtime._Lost")
 }
 
-// wait waits for the profiles being cut, at most until the deadline.
+// wait cuts now what waits for a cut, and waits for the profiles being cut, at most until the deadline: Flush.
 func (p *profiler) wait(timeout time.Duration) {
-	done := make(chan struct{})
-	go func() {
-		p.pending.Wait()
-		close(done)
-	}()
+	p.mu.Lock()
+	if !p.cutting && len(p.ending) > 0 {
+		p.disarm()
+		p.cutting = true
+		go p.cut()
+	}
+	if p.pending == 0 {
+		p.mu.Unlock()
+		return
+	}
+	if p.drained == nil {
+		p.drained = make(chan struct{})
+	}
+	drained := p.drained
+	p.mu.Unlock()
 	select {
-	case <-done:
+	case <-drained:
 	case <-time.After(timeout):
 	}
 }

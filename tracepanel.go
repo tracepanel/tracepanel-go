@@ -287,11 +287,15 @@ func (t *tracepanel) finish(rec *recording) {
 		t.deliver(doc)
 		return
 	}
-	t.profiler.end(rec.profile, func(profile *profileDoc) {
+	t.profiler.end(rec.profile, func(profile *profileDoc, gap time.Duration) {
 		if profile != nil {
 			doc.Profile = profile
 			if profile.Dropped > 0 {
 				doc.Attrs["tracepanel.dropped_samples"] = profile.Dropped
+			}
+			if gap >= time.Millisecond {
+				// The profiler was stopped (for another trace's profile) this long while the trace ran.
+				doc.Attrs["tracepanel.profile_gap_ms"] = gap.Milliseconds()
 			}
 		}
 		t.deliver(doc)

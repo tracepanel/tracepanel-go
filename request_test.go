@@ -39,7 +39,13 @@ func record(t *testing.T) *recorder {
 	}
 	active.Store(r.t)
 	fake.reset()
-	t.Cleanup(func() { active.Store(nil) })
+	t.Cleanup(func() {
+		// A test's profiles are cut before the next test's: the CPU profile is the process's.
+		if r.t.profiler != nil {
+			r.t.profiler.wait(5 * time.Second)
+		}
+		active.Store(nil)
+	})
 	return r
 }
 

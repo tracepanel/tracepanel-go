@@ -211,28 +211,181 @@ func TestSamplesGoToTheTraceTheirLabelNames(t *testing.T) {
 	}
 }
 
-func TestACutHandsEveryEndedTraceItsProfile(t *testing.T) {
-	p := newProfiler()
-	starts := 0
-	p.startCPU = func(*bytes.Buffer) error { starts++; return nil }
-	p.stopCPU = func() {}
-	_, first := p.start(context.Background(), "first")
-	_, second := p.start(context.Background(), "second")
-	got := make(chan *profileDoc, 2)
+// fakeCPU counts what the profiler does to the CPU profile; stop may be held, as macOS holds it up to 100 ms.
+type fakeCPU struct {
+	mu            sync.Mutex
+	starts, stops int
+	hold          chan struct{}
+}
 
-	p.end(first, func(doc *profileDoc) { got <- doc })
-	if doc := <-got; doc == nil || doc.Samples != 0 {
-		t.Fatalf("first: %+v", doc)
+func (f *fakeCPU) install(p *profiler) {
+	p.startCPU = func(*bytes.Buffer) error { f.mu.Lock(); f.starts++; f.mu.Unlock(); return nil }
+	p.stopCPU = func() {
+		f.mu.Lock()
+		f.stops++
+		hold := f.hold
+		f.mu.Unlock()
+		if hold != nil {
+			<-hold
+		}
 	}
-	p.end(second, func(doc *profileDoc) { got <- doc })
-	<-got
+}
+
+func (f *fakeCPU) counts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts, f.stops
+}
+
+type ended struct {
+	doc *profileDoc
+	gap time.Duration
+}
+
+func collect(got chan ended) func(*profileDoc, time.Duration) {
+	return func(doc *profileDoc, gap time.Duration) { got <- ended{doc, gap} }
+}
+
+func TestBackToBackTracesAreSampledWithoutAStop(t *testing.T) {
+	p := newProfiler()
+	p.cutIdle = time.Hour
+	cpu := &fakeCPU{}
+	cpu.install(p)
+	got := make(chan ended, 3)
+
+	// One trace after the other, and a third while the second runs: the profile runs on, never stopped between.
+	_, first := p.start(context.Background(), "first")
+	p.end(first, collect(got))
+	_, second := p.start(context.Background(), "second")
+	_, third := p.start(context.Background(), "third")
+	p.end(second, collect(got))
+	p.end(third, collect(got))
+
+	if starts, stops := cpu.counts(); starts != 1 || stops != 0 {
+		t.Fatalf("starts %d, stops %d", starts, stops)
+	}
+
+	// Flush cuts at once: one stop hands every ended trace its profile, none with a gap.
 	p.wait(time.Second)
 
-	// Started for the first, again for the second once the first's cut stopped it, and not after.
-	if p.mu.Lock(); starts != 2 || p.running || len(p.traces) != 0 {
-		t.Fatalf("starts %d, running %v, traces %v", starts, p.running, p.traces)
+	for range 3 {
+		if e := <-got; e.doc == nil || e.gap != 0 {
+			t.Fatalf("ended %+v", e)
+		}
 	}
-	p.mu.Unlock()
+	if starts, stops := cpu.counts(); starts != 1 || stops != 1 || p.running || len(p.traces) != 0 {
+		t.Fatalf("starts %d, stops %d, running %v, traces %v", starts, stops, p.running, p.traces)
+	}
+}
+
+func TestTheCutComesOnceNoTraceRanForAWhile(t *testing.T) {
+	p := newProfiler()
+	p.cutIdle = 20 * time.Millisecond
+	cpu := &fakeCPU{}
+	cpu.install(p)
+	got := make(chan ended, 1)
+
+	_, first := p.start(context.Background(), "first")
+	p.end(first, collect(got))
+
+	if e := <-got; e.doc == nil {
+		t.Fatalf("ended %+v", e)
+	}
+	if starts, stops := cpu.counts(); starts != 1 || stops != 1 {
+		t.Fatalf("starts %d, stops %d", starts, stops)
+	}
+}
+
+func TestUnderSteadyLoadAnEndedTraceWaitsAtMostCutWait(t *testing.T) {
+	p := newProfiler()
+	p.cutIdle, p.cutWait = 10*time.Millisecond, 50*time.Millisecond
+	cpu := &fakeCPU{}
+	cpu.install(p)
+	got := make(chan ended, 1)
+	_, long := p.start(context.Background(), "long")
+	_, short := p.start(context.Background(), "short")
+
+	began := time.Now()
+	p.end(short, collect(got))
+	e := <-got
+	waited := time.Since(began)
+
+	// Cut while the long one runs, which goes on being profiled.
+	if e.doc == nil || waited < 50*time.Millisecond {
+		t.Fatalf("ended %+v after %v", e, waited)
+	}
+	if starts, stops := cpu.counts(); starts != 2 || stops != 1 || !p.running {
+		t.Fatalf("starts %d, stops %d, running %v", starts, stops, p.running)
+	}
+	p.end(long, func(*profileDoc, time.Duration) {})
+	p.wait(time.Second)
+}
+
+func TestATraceRunningWhileACutStopsTheProfilerSaysHowLong(t *testing.T) {
+	p := newProfiler()
+	p.cutIdle = time.Hour
+	cpu := &fakeCPU{hold: make(chan struct{})}
+	cpu.install(p)
+	got := make(chan ended, 2)
+	_, first := p.start(context.Background(), "first")
+	p.end(first, collect(got))
+
+	// The cut stops the profiler (held, as macOS holds it), and a trace starts meanwhile.
+	go p.wait(time.Second)
+	for _, stops := cpu.counts(); stops == 0; _, stops = cpu.counts() {
+		time.Sleep(time.Millisecond)
+	}
+	_, second := p.start(context.Background(), "second")
+	time.Sleep(30 * time.Millisecond)
+	close(cpu.hold)
+	<-got
+	p.end(second, collect(got))
+	p.wait(time.Second)
+
+	if e := <-got; e.doc == nil || e.gap < 30*time.Millisecond || e.gap > time.Second {
+		t.Fatalf("second %+v", e)
+	}
+	if starts, stops := cpu.counts(); starts != 2 || stops != 2 {
+		t.Fatalf("starts %d, stops %d", starts, stops)
+	}
+}
+
+func TestBackToBackProfiledRequestsLoseNoSamples(t *testing.T) {
+	recorded := record(t)
+	recorded.t.profiler = newProfiler()
+	var mu sync.Mutex
+	stops := 0
+	recorded.t.profiler.stopCPU = func() {
+		mu.Lock()
+		stops++
+		mu.Unlock()
+		pprof.StopCPUProfile()
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /report", func(w http.ResponseWriter, r *http.Request) {
+		burnProfiled(150 * time.Millisecond)
+	})
+	handler := recorded.t.middleware(mux)
+
+	for range 3 {
+		request := httptest.NewRequest(http.MethodGet, "/report", nil)
+		request.Header.Set("X-Tracepanel-Profile", "1")
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}
+	mu.Lock()
+	stopsWhileRunning := stops
+	mu.Unlock()
+	Flush(5 * time.Second)
+
+	// The profiler ran through the three: each has its samples from its start, none a gap.
+	if stopsWhileRunning != 0 {
+		t.Fatalf("the profiler stopped %d times between the requests", stopsWhileRunning)
+	}
+	for _, doc := range recorded.wait(t, 3) {
+		if doc.Profile == nil || doc.Profile.Samples == 0 || doc.Attrs["tracepanel.profile_gap_ms"] != nil {
+			t.Fatalf("%s: profile %+v, attrs %v", doc.Name, doc.Profile, doc.Attrs)
+		}
+	}
 }
 
 func TestTheHelloSaysWhatTheAppDoes(t *testing.T) {
