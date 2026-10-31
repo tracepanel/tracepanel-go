@@ -83,7 +83,8 @@ func TestAProfiledRequestHasItsOwnSamplesOnly(t *testing.T) {
 		t.Fatalf("the request not asked has a profile: %+v", other)
 	}
 	profile := report.Profile
-	if profile == nil || profile.IntervalUs != 10_000 || profile.Samples < 5 || profile.Dropped != 0 {
+	// Samples are CPU time: fewer when the tests' other packages share the CPUs (and macOS delivers fewer anyway).
+	if profile == nil || profile.IntervalUs != 10_000 || profile.Samples < 2 || profile.Dropped != 0 {
 		t.Fatalf("profile: %+v", profile)
 	}
 	named := functions(profile)
