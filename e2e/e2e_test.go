@@ -1,6 +1,7 @@
 // Package e2e runs a Go app against the real agent: WrapHandler and tracepanel.Driver on SQLite, a page with an N+1, and the
 // agent's API read back, its trace, its SQL spans and the n+1 issue; then a request asked to be profiled, its
-// profile and what it carried (the Request tab). The agent is TRACEPANEL_AGENT_BIN, else a build
+// profile and what it carried (the Request tab); then the same N+1 through GORM (gormtrace's plugin), found with
+// GORM's fix as its hint. SQLite is pure Go (glebarez's, the GORM driver's), so it runs without cgo. The agent is TRACEPANEL_AGENT_BIN, else a build
 // of the agent's repository next to this one, else the one the SDK downloads (cmd/tracepanel runs it); without any,
 // the test is skipped. A module of its own, so the SDK itself keeps no dependencies.
 package e2e
@@ -22,8 +23,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	tracepanel "github.com/tracepanel/tracepanel-go"
-	_ "modernc.org/sqlite"
+	"github.com/tracepanel/tracepanel-go/gormtrace"
 )
 
 // exe is what a program's name ends with: .exe on Windows.
@@ -213,7 +218,8 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	t.Setenv("TRACEPANEL_DIR", dir)
 	t.Setenv("TRACEPANEL_AGENT", "")
 	t.Setenv("TRACEPANEL_SERVICE", "e2e-shop")
-	db, err := sql.Open(tracepanel.Driver("sqlite"), filepath.Join(t.TempDir(), "shop.db"))
+	path := filepath.Join(t.TempDir(), "shop.db")
+	db, err := sql.Open(tracepanel.Driver("sqlite"), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,8 +234,17 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The same database through GORM, recorded by its plugin.
+	orm, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orm.Use(gormtrace.Plugin()); err != nil {
+		t.Fatal(err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authors", authors(db))
+	mux.HandleFunc("GET /gorm/authors", gormAuthors(orm))
 	mux.HandleFunc("POST /report", report)
 	server := httptest.NewServer(tracepanel.WrapHandler(mux))
 	defer server.Close()
@@ -304,11 +319,98 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	for _, version := range app.Versions {
 		modules[version.Name] = version.Kind
 	}
-	if modules["Go"] != "runtime" || modules["modernc.org/sqlite"] != "package" || app.Settings["TRACEPANEL_SERVICE"] != "e2e-shop" {
+	if modules["Go"] != "runtime" || modules["github.com/glebarez/go-sqlite"] != "package" || app.Settings["TRACEPANEL_SERVICE"] != "e2e-shop" {
 		t.Fatalf("api/app %+v", app)
 	}
 
 	profiledReport(t, server, console)
+	gormNPlusOne(t, server, console)
+}
+
+type author struct {
+	ID   int
+	Name string
+}
+
+type book struct {
+	ID       int
+	AuthorID int
+	Title    string
+}
+
+// The authors page through GORM: its authors, then each one's books, a Find per author.
+func gormAuthors(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		var authors []author
+		if err := db.WithContext(ctx).Order("id").Find(&authors).Error; err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var page strings.Builder
+		page.WriteString("<html><head><title>Authors</title></head><body>")
+		for _, a := range authors {
+			var books []book
+			// The N+1: one query per author, where Preload would load them all in one.
+			if err := db.WithContext(ctx).Where("author_id = ?", a.ID).Find(&books).Error; err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprintf(&page, "<p>%s: %d books</p>", a.Name, len(books))
+		}
+		page.WriteString("</body></html>")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, page.String())
+	}
+}
+
+// gormNPlusOne: the N+1 through GORM reaches the agent as the plugin records it (db.client gorm, the rows each
+// query returned), and the agent's issue names GORM's fix.
+func gormNPlusOne(t *testing.T, server *httptest.Server, console string) {
+	t.Helper()
+	response, err := http.Get(server.URL + "/gorm/authors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	id := response.Header.Get("Tracepanel-Id")
+	tracepanel.Flush(5 * time.Second)
+	found := stored(t, console, id)
+	var issues struct {
+		Issues []struct {
+			Kind  string  `json:"kind"`
+			Count int     `json:"count"`
+			Hint  *string `json:"hint"`
+		} `json:"issues"`
+	}
+	get(t, console, "traces/"+id+"/issues", &issues)
+
+	var queries []string
+	for _, s := range found.Spans {
+		if s.Kind == "sql" {
+			queries = append(queries, fmt.Sprint(s.Attrs["db.statement"], " | ", s.Attrs["db.client"], " | ",
+				s.Attrs["db.system"], " | ", s.Attrs["db.response.returned_rows"]))
+		}
+	}
+	want := []string{"SELECT * FROM `authors` ORDER BY id | gorm | sqlite | 5"}
+	for _, books := range []int{1, 2, 0, 0, 0} {
+		want = append(want, fmt.Sprintf("SELECT * FROM `books` WHERE author_id = ? | gorm | sqlite | %d", books))
+	}
+	if response.StatusCode != http.StatusOK || strings.Join(queries, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("HTTP %d, SQL spans:\n%s", response.StatusCode, strings.Join(queries, "\n"))
+	}
+	var hinted []string
+	for _, issue := range issues.Issues {
+		hint := ""
+		if issue.Hint != nil {
+			hint = *issue.Hint
+		}
+		hinted = append(hinted, fmt.Sprintf("%s ×%d: %s", issue.Kind, issue.Count, hint))
+	}
+	if len(hinted) != 1 || !strings.HasPrefix(hinted[0], "n+1 ×5: ") || !strings.Contains(hinted[0], "`Preload()`") {
+		t.Fatalf("issues %q", hinted)
+	}
 }
 
 // profiledReport: a request asked to be profiled reaches the agent with its profile, and with what it carried for
