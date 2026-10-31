@@ -10,9 +10,10 @@
 // `go run`, with TRACEPANEL_ENABLED=1 or Config.Enabled; a binary `go build` wrote records nothing, and
 // TRACEPANEL_ENABLED=0 always wins. The agent comes with it: the
 // first trace starts the one the SDK downloads (once, into the user's cache). Its MCP server, for AI coding agents,
-// runs with
+// runs with the tracepanel command:
 //
-//	go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp
+//	go install github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0
+//	tracepanel mcp
 package tracepanel
 
 import (

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -84,11 +85,58 @@ func TestRunStartsTheAppRecording(t *testing.T) {
 	shop, seen := fakeApp(t)
 	t.Setenv("TRACEPANEL_ENABLED", "")
 
+	said := said(t)
+
 	code := run([]string{"run", shop, "--addr", ":9000"})
 	got, _ := os.ReadFile(seen)
 
 	if code != 4 || strings.TrimSpace(string(got)) != "1 --addr :9000" {
 		t.Fatalf("exit %d, the app saw %q", code, got)
+	}
+	// Under go run, which exits 1 whatever the app's code, the app's status is in this line.
+	if said.String() != "tracepanel: "+shop+" exited with status 4\n" {
+		t.Fatalf("stderr %q", said.String())
+	}
+}
+
+// said is what the command says on stderr while the test runs.
+func said(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var out bytes.Buffer
+	before := stderr
+	stderr = &out
+	t.Cleanup(func() { stderr = before })
+	return &out
+}
+
+func TestRunSaysHowAnAppThatFailedEnded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a shell script stands in for the app")
+	}
+	dir := t.TempDir()
+	cases := []struct {
+		script string
+		code   int
+		said   string
+	}{
+		{"exit 0", 0, ""},
+		{"exit 3", 3, "tracepanel: ./shop exited with status 3\n"},
+		{"kill -KILL $$", 128 + 9, "tracepanel: ./shop ended by signal: killed\n"},
+		// Ctrl-C's and SIGTERM's: this command passed them on, nothing to say.
+		{"kill -TERM $$", 128 + 15, ""},
+	}
+	for _, c := range cases {
+		if err := os.WriteFile(filepath.Join(dir, "shop"), []byte("#!/bin/sh\n"+c.script+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(dir)
+		said := said(t)
+
+		code := run([]string{"run", "./shop"})
+
+		if code != c.code || said.String() != c.said {
+			t.Errorf("%s: exit %d, said %q", c.script, code, said.String())
+		}
 	}
 }
 

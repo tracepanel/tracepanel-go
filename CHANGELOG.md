@@ -118,10 +118,14 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   `100,snowflake=3000`, the database's kind told by its driver
   (gosnowflake's is `snowflake`, BigQuery's, Databricks', Redshift's
   too), else by `tracepanel.DBSystem`.
-- `go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp`: the
-  agent's MCP server for AI coding agents, `dev` for its console in the
-  foreground (`dev -- ./shop` with the app beside it), and `run ./shop`
-  for a built binary, recording.
+- The `tracepanel` command (`go install
+  github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0`):
+  `tracepanel mcp`, the agent's MCP server for AI coding agents, `dev`
+  for its console in the foreground (`dev -- ./shop` with the app beside
+  it), and `run ./shop` for a built binary, recording, which exits with
+  the app's code and says on stderr how an app that failed ended
+  (`tracepanel: ./shop exited with status 3`), the app's status under
+  `go run` too, which exits 1 whatever the code.
 - The agent downloaded the first time from its npm platform package (or
   `TRACEPANEL_NPM_REGISTRY`, a mirror), checked against the SHA-512 of its
   binary the SDK was released with, and kept in the user's cache, where

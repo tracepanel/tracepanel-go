@@ -51,8 +51,15 @@ binary, run it through the SDK's command, which sets
 `TRACEPANEL_ENABLED=1` for it:
 
 ```bash
-go run github.com/tracepanel/tracepanel-go/cmd/tracepanel run ./shop
+go install github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0
+tracepanel run ./shop
 ```
+
+`tracepanel run` exits with the app's exit code, and says on stderr how
+an app that failed ended (`tracepanel: ./shop exited with status 3`).
+`go run github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0 run
+./shop` works without installing it, but `go run` exits 1 whatever the
+program's code, so that line is where the app's status is.
 
 ### The agent
 
@@ -452,19 +459,21 @@ aren't kept.
 ## MCP
 
 For an AI coding agent (Claude Code, Cursor, Codex), the same traces over
-MCP, from the project's directory, with the agent the SDK runs:
+MCP, from the project's directory, with the agent the SDK runs, through
+the `tracepanel` command (`go install
+github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0`):
 
 ```bash
-claude mcp add --scope project tracepanel -- go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp
+claude mcp add --scope project tracepanel -- tracepanel mcp
 ```
 
-The same command runs the agent's console in the foreground
+Without installing it, `go run
+github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.0 mcp` does the
+same. The command runs the agent's console in the foreground
 (`tracepanel dev --port 8765`, and `tracepanel dev -- ./shop` with the
 app beside it, recording), a built app recording (`tracepanel run
 ./shop`) and the agent with its own arguments (`tracepanel agent
---help`). `go install
-github.com/tracepanel/tracepanel-go/cmd/tracepanel@latest` puts it on the
-`PATH`.
+--help`).
 
 ## Development
 
