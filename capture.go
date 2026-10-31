@@ -55,7 +55,7 @@ func headerAttrs(prefix string, header http.Header, skip string) attrMap {
 			continue
 		}
 		key := prefix + attrKey(lowered)
-		if alwaysMasked[lowered] || secret.MatchString(strings.ReplaceAll(lowered, "-", "_")) {
+		if alwaysMasked[lowered] || sensitive(name) {
 			attrs[key] = mask
 			continue
 		}
@@ -82,7 +82,7 @@ func requestAttrs(r *http.Request) attrMap {
 	}
 	for _, cookie := range r.Cookies() {
 		value := cookie.Value
-		if secret.MatchString(cookie.Name) {
+		if sensitive(cookie.Name) {
 			value = mask
 		}
 		attrs["http.request.cookie."+attrKey(cookie.Name)] = value
@@ -120,7 +120,7 @@ func maskedQuery(raw string) string {
 		}
 		name, value, _ := strings.Cut(part, "=")
 		name, value = unescape(name), unescape(value)
-		if secret.MatchString(name) {
+		if sensitive(name) {
 			value = mask
 		}
 		pairs = append(pairs, quote(name, "_.~*/:-", true)+"="+quote(value, "_.~*/:-", true))
@@ -296,10 +296,17 @@ func maskValue(decoder *json.Decoder, out *bytes.Buffer) bool {
 			encoded, _ := json.Marshal(name)
 			out.Write(encoded)
 			out.WriteByte(':')
-			if secret.MatchString(name) {
+			if sensitive(name) {
 				var skipped json.RawMessage
 				if decoder.Decode(&skipped) != nil {
 					return false
+				}
+				// A model's tokens, counted: shown as they are.
+				var decoded any
+				if json.Unmarshal(skipped, &decoded) == nil && counted(name, decoded) {
+					compact, _ := json.Marshal(decoded)
+					out.Write(compact)
+					continue
 				}
 				out.WriteString(`"` + mask + `"`)
 				continue
@@ -360,7 +367,7 @@ func formText(fields []field, files []field) string {
 	pairs := make([]string, 0, len(fields)+len(files))
 	for _, f := range fields {
 		value := f.value
-		if secret.MatchString(f.name) {
+		if sensitive(f.name) {
 			value = mask
 		}
 		pairs = append(pairs, quote(f.name, readable, false)+"="+quote(value, readable, false))

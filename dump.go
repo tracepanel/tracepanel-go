@@ -94,7 +94,7 @@ type dumpEntry struct {
 // later lines indented under it.
 func dumpArg(expr *string, value any) (dumpEntry, string) {
 	entry := dumpEntry{Expr: expr, Type: fmt.Sprintf("%T", value)}
-	if expr != nil && secret.MatchString(*expr) {
+	if expr != nil && masked(*expr, value) {
 		entry.Repr = mask
 	} else {
 		entry.Repr = prettyValue(value)
@@ -399,10 +399,10 @@ func (p *printer) structure(v reflect.Value, depth int) {
 		}
 		name := t.Field(i).Name
 		p.write(indent + name + ":" + strings.Repeat(" ", width-len(name)+1))
-		if secret.MatchString(name) {
+		if field := v.Field(i); sensitive(name) && !countedValue(name, field) {
 			p.write(mask)
 		} else {
-			p.value(v.Field(i), depth+1)
+			p.value(field, depth+1)
 		}
 		p.write(",\n")
 	}
@@ -459,7 +459,7 @@ func (p *printer) mapping(v reflect.Value, depth int) {
 			break
 		}
 		value := mask
-		if !secretKey(k) {
+		if !secretKey(k) || countedValue(k.String(), v.MapIndex(k)) {
 			value = p.nested(v.MapIndex(k), depth+1)
 		}
 		items = append(items, p.nested(k, depth+1)+": "+value)
@@ -472,7 +472,7 @@ func secretKey(k reflect.Value) bool {
 	if k.Kind() == reflect.Interface && !k.IsNil() {
 		k = k.Elem()
 	}
-	return k.Kind() == reflect.String && secret.MatchString(k.String())
+	return k.Kind() == reflect.String && sensitive(k.String())
 }
 
 // nested is a value's text, printed apart: an element of a list or a map.

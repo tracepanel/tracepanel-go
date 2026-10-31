@@ -106,6 +106,10 @@ kept in `%LOCALAPPDATA%\tracepanel\`).
   out) and the response's headers. Values under a name that looks
   secret (`Authorization`, `password`, `sessionid`, `api_key`) are
   masked before they are recorded, and none of it leaves your machine.
+  A name is read word by word (camelCase, `snake_case`, `kebab-case`,
+  dots), as every Tracepanel SDK reads it: `authToken`, `AUTH_HEADER`
+  and `X-Api-Key` are masked, `Author`, `tokenizer` and `token_type`
+  aren't, and `tokens` holding numbers (a model's counts) is shown.
   The SDK never reads a body your handler didn't.
 - Where a request's CPU time went, when the panel's Profile asks for it
   (see [Profiles](#profiles)).
