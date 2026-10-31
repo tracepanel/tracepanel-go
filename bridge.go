@@ -233,7 +233,7 @@ func flattenFields(attrs attrMap, prefix string, fields map[string]any) {
 		if key == "" {
 			continue
 		}
-		if secret.MatchString(key) {
+		if masked(key, value) {
 			attrs[prefix+key] = mask
 			continue
 		}

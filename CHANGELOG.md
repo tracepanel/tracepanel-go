@@ -74,6 +74,13 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   body as far as the handler read it (16 KB; JSON and forms masked,
   binary left out) and the response's headers, secret-looking values
   masked; `TRACEPANEL_CAPTURE_REQUEST=0` keeps none of it.
+- One secret rule for every value masked by its name (a request's
+  headers, query, cookies and body, a log record's fields, a dump's
+  expressions, fields and keys), the other SDKs': a name read word by
+  word (camelCase, snake_case, kebab-case, dots), so `authToken`,
+  `AUTH_HEADER` and `X-Api-Key` are masked and `Author`, `tokenizer`,
+  `token_type` and `hasPassword` aren't; `tokens` holding numbers is a
+  model's counts, shown.
 - The integrations, each a module of its own tagged with the core
   (`gintrace/v0.10.0`), so the core keeps no dependencies:
   - `gintrace.Middleware()` for gin, `echotrace.Middleware()` for Echo v4
