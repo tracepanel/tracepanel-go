@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tracepanel/tracepanel-go/internal/agentbin"
 )
 
 // The agent starts on demand, as every SDK starts it: the first trace finds none for the project, so this process
@@ -15,7 +17,6 @@ import (
 // after idleExit with nothing to do; one per project (a second one on the same directory exits at once).
 
 const (
-	agentBinary  = "tracepanel-agent"
 	idleExit     = "1800"
 	startWait    = time.Second
 	consoleCheck = 2 * time.Second
@@ -33,25 +34,6 @@ func autoStart() bool {
 	return value == "" || value == "auto"
 }
 
-// agentExecutable is $TRACEPANEL_AGENT_BIN, else this SDK's own version of the agent (downloaded once), else
-// tracepanel-agent on the PATH: without a network, the one pip or npm installed.
-func agentExecutable() string {
-	if explicit := os.Getenv("TRACEPANEL_AGENT_BIN"); explicit != "" {
-		if _, err := os.Stat(explicit); err == nil {
-			return explicit
-		}
-		return ""
-	}
-	if downloaded := downloadedAgent(); downloaded != "" {
-		return downloaded
-	}
-	path, err := exec.LookPath(agentBinary)
-	if err != nil {
-		return ""
-	}
-	return path
-}
-
 // ensure makes sure an agent runs for the project: one already answers, or this process starts it (once). It
 // reports whether there is one.
 func (s *starter) ensure() bool {
@@ -66,9 +48,9 @@ func (s *starter) ensure() bool {
 }
 
 func (s *starter) start() {
-	executable := agentExecutable()
+	executable := agentbin.Path()
 	if executable == "" {
-		log.Printf("tracepanel: no %s could be had (set TRACEPANEL_AGENT_BIN, or put it on the PATH): traces aren't kept", agentBinary)
+		log.Printf("tracepanel: no %s could be had (set TRACEPANEL_AGENT_BIN, or put it on the PATH): traces aren't kept", agentbin.Binary)
 		return
 	}
 	dir, err := filepath.Abs(s.storeDir)

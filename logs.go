@@ -15,7 +15,8 @@ import (
 //
 //	logger := slog.New(tracepanel.WrapLogHandler(slog.NewJSONHandler(os.Stdout, nil)))
 //
-// A record keeps its level, its message, the line that logged it, and each attribute as an extra. field.
+// A record keeps its level, its message, the line that logged it, and each attribute as an extra field
+// (extra.name, a group's extra.group.name), a secret-looking one masked.
 func WrapLogHandler(next slog.Handler) slog.Handler {
 	if _, ok := next.(*logHandler); ok {
 		return next

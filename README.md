@@ -33,11 +33,16 @@ an HTML page opens it, and `Tracepanel-Url` names it.
 
 The agent is a program of its own, which keeps the traces and finds the
 issues. You don't install it: the SDK downloads its own version of it the
-first time, from the agent's npm package for your platform, checks it
-against the checksum it was released with, and keeps it in
-`~/.cache/tracepanel/` for every project. `TRACEPANEL_AGENT_BIN` names
-another one, and without a network the SDK runs `tracepanel-agent` from the
-`PATH`.
+first time, from the agent's npm package for your platform, checks the
+binary against the SHA-512 the SDK was released with, and keeps it in
+`~/.cache/tracepanel/` for every project, where it is checked again the
+first time a process runs it. Behind a proxy, set `HTTPS_PROXY`; with an
+npm mirror, `TRACEPANEL_NPM_REGISTRY` (or npm's own
+`npm_config_registry`). `TRACEPANEL_AGENT_BIN` names another agent, and
+without a network the SDK runs `tracepanel-agent` from the `PATH`.
+
+The SDK and the agent share a minor version: Tracepanel for Go 0.10.x runs
+`tracepanel-agent` 0.10.x.
 
 Go 1.26 or later.
 
@@ -53,14 +58,21 @@ Go 1.26 or later.
   (`slog.InfoContext(ctx, ...)`), with the line that logged them.
 - Calls to HTTP APIs through `http.DefaultClient` (`http.Get` too) or a
   client with `tracepanel.WrapTransport(base)`, each with a `traceparent`, so
-  the app it reaches links its trace to the call.
+  the app it reaches links its trace to the call. When the panel's Profile
+  asked for the request, its calls carry `X-Tracepanel-Profile`, so the
+  apps down the chain profile their part.
 - Panics, with your frames and the source around them. The request
   answers 500.
 - The caller's trace, when a request carries a W3C `traceparent`.
 
 Every response carries `Tracepanel-Id` and `Server-Timing`, and an HTML page
-gets the badge. A response the handler flushes (a stream) or takes over (a
-WebSocket) goes out as it is written, without the badge.
+gets the badge: a page is held until the handler returns, unless it
+flushes it. Any other response (JSON, a file, a stream) goes out as it is
+written, and one the handler takes over (a WebSocket) is its own.
+
+The console's App tab shows Go, the router, your module and the modules it
+depends on, and the build's settings that hold no secret (never
+`-ldflags`).
 
 A statement, a log record or a call joins the request's trace through its
 context: pass `r.Context()` down, as in `db.QueryContext(ctx, ...)`. Work
@@ -141,37 +153,59 @@ exits, so its traces reach the agent.
 | `Service` | `TRACEPANEL_SERVICE` | the executable's name |
 | `StoreDir` | `TRACEPANEL_DIR` | `.tracepanel`, the project's store |
 | `ConsoleURL` | `TRACEPANEL_CONSOLE_URL` | where the project's agent serves it |
-| `MaxTraces` | | `2000`, the traces the agent keeps |
+| `MaxTraces` | `TRACEPANEL_MAX_TRACES` | `2000`, the traces the agent keeps |
 | | `TRACEPANEL_AGENT_BIN` | the one the SDK downloads |
 | | `TRACEPANEL_AGENT` | `auto`; an agent elsewhere (`tcp:host:port`), never started; `off` starts none |
 | | `TRACEPANEL_CACHE_DIR` | `~/.cache/tracepanel`, where the downloaded agent is kept |
+| | `TRACEPANEL_NPM_REGISTRY` | npm's registry, where the agent is downloaded from |
 | | `TRACEPANEL_N_PLUS_ONE_THRESHOLD` | `3`, repeats that make an N+1 |
+| | `TRACEPANEL_N_PLUS_ONE_MIN_MS` | `5`, the time repeated cache calls must cost together |
 | | `TRACEPANEL_SLOW_SQL_MS` | `100`, a slow query |
 | | `TRACEPANEL_LONG_TRANSACTION_MS` | `500`, a long transaction |
-| | `TRACEPANEL_SLOW_HTTP_MS` | a slow outgoing call |
+| | `TRACEPANEL_SLOW_HTTP_MS` | `500`, a slow outgoing call |
+| | `TRACEPANEL_QUEUE_WAIT_MS` | `1000`, a task that waited too long for a worker |
 | | `TRACEPANEL_LARGE_RESULT_ROWS` | `1000`, a query without a LIMIT that read too many rows |
+
+`TRACEPANEL_SLOW_SQL_MS` and `TRACEPANEL_LONG_TRANSACTION_MS` take a limit
+per database too, by its kind: `TRACEPANEL_SLOW_SQL_MS=100,snowflake=3000`
+holds every database to 100 ms but Snowflake, to 3 s. Without one, the
+agent holds an analytical warehouse (Snowflake, BigQuery, ClickHouse) to
+2 s per query.
 
 Without an agent (none could be had, or it couldn't start), the log says
 why once. Responses keep their headers, pages get no badge, and traces
 aren't kept.
 
+## MCP
+
 For an AI coding agent (Claude Code, Cursor, Codex), the same traces over
-MCP, from the project's directory:
+MCP, from the project's directory, with the agent the SDK runs:
 
 ```bash
-claude mcp add --scope project tracepanel -- tracepanel-agent mcp
+claude mcp add --scope project tracepanel -- go run github.com/tracepanel/tracepanel-go/cmd/tracepanel mcp
 ```
+
+The same command runs the agent's console in the foreground
+(`tracepanel dev --port 8765`) and the agent with its own arguments
+(`tracepanel agent --help`). `go install
+github.com/tracepanel/tracepanel-go/cmd/tracepanel@latest` puts it on the
+`PATH`.
 
 ## Development
 
 ```bash
-make lint    # gofmt, go vet, the tests
+make lint       # gofmt, go vet, the tests
+make e2e        # an app against the real agent (e2e/, a module of its own)
+make integrity  # the checksums of AgentVersion's binaries, once it is on npm
 ```
 
-`go generate` writes `integrity.go`, the checksums of the agent's downloads,
-after `AgentVersion` changes in `version.go`. The test that starts the
-agent runs with a build of the sibling `tracepanel` checkout, or the one
-`TRACEPANEL_AGENT_BIN` names.
+`make integrity` (or `go generate`) writes `internal/agentbin/integrity.go`,
+the SHA-512 of each platform's agent binary, after `AgentVersion` changes in
+`version.go`; a release checks the tag is `Version`, `AgentVersion` of its
+minor, and the checksums of `AgentVersion`. The tests that run the agent
+take a build of the sibling `tracepanel` checkout, or the one
+`TRACEPANEL_AGENT_BIN` names; `make e2e` downloads it otherwise, as an app
+does.
 
 ## License
 

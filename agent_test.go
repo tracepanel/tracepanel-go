@@ -1,25 +1,20 @@
 package tracepanel
 
 import (
-	"archive/tar"
 	"bufio"
-	"bytes"
-	"compress/gzip"
-	"crypto/sha512"
 	"database/sql"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tracepanel/tracepanel-go/internal/agentbin"
 )
 
 func readFrame(t *testing.T, reader io.Reader) []byte {
@@ -95,11 +90,16 @@ func TestTheAgentGetsTheHelloTheTracesAndAnEXPLAINOnTheAppsDatabase(t *testing.T
 		}
 	}
 
+	app, _ := hello["app"].(map[string]any)
+	delete(hello, "app")
 	if !equalJSON(hello, map[string]any{
 		"protocol": 1, "max_traces": 500, "thresholds": map[string]any{"n_plus_one": 5}, "service": "shop",
 		"capabilities": []string{"explain"},
 	}) {
 		t.Fatalf("hello %v", hello)
+	}
+	if settings, _ := app["settings"].(map[string]any); settings["TRACEPANEL_SERVICE"] != "shop" || settings["GOOS"] != runtime.GOOS {
+		t.Fatalf("app %v", app)
 	}
 	if traces := frames["traces"].([]any); len(traces) != 1 || traces[0].(map[string]any)["id"] != "01M4ZYCP0KQZZPC6SD1RJ4PBY5" {
 		t.Fatalf("traces %v", frames["traces"])
@@ -126,68 +126,6 @@ func TestAnEXPLAINOnADatabaseTheAppDoesntHaveSaysSo(t *testing.T) {
 	}
 }
 
-// package builds an npm platform package: package/bin/<executable> in a .tgz.
-func platformPackage(t *testing.T, executable string, content []byte) []byte {
-	t.Helper()
-	var buffer bytes.Buffer
-	zipped := gzip.NewWriter(&buffer)
-	archive := tar.NewWriter(zipped)
-	for name, data := range map[string][]byte{"package/package.json": []byte("{}"), "package/bin/" + executable: content} {
-		_ = archive.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(data))})
-		_, _ = archive.Write(data)
-	}
-	_ = archive.Close()
-	_ = zipped.Close()
-	return buffer.Bytes()
-}
-
-func TestTheAgentIsDownloadedOnceCheckedAgainstItsChecksum(t *testing.T) {
-	tarball := platformPackage(t, "tracepanel-agent", []byte("#!/bin/sh\necho agent\n"))
-	digest := sha512.Sum512(tarball)
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(digest[:])
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(tarball) }))
-	defer server.Close()
-	binary := filepath.Join(t.TempDir(), "agent", "0.3.0", "linux-x64-gnu", "tracepanel-agent")
-
-	err := download(server.URL+"/agent.tgz", integrity, "linux-x64-gnu", binary)
-	data, _ := os.ReadFile(binary)
-	info, _ := os.Stat(binary)
-	refused := download(server.URL+"/agent.tgz", "sha512-"+strings.Repeat("A", 86)+"==", "linux-x64-gnu", binary+"2")
-
-	// Windows has no executable bit: a file is run by its name.
-	executable := runtime.GOOS == "windows" || info != nil && info.Mode().Perm()&0o100 != 0
-	if err != nil || string(data) != "#!/bin/sh\necho agent\n" || !executable {
-		t.Fatalf("%v: %q, %v", err, data, info)
-	}
-	if refused == nil || !strings.Contains(refused.Error(), "checksum") {
-		t.Fatalf("a tampered download: %v", refused)
-	}
-	if _, err := os.Stat(binary + "2"); err == nil {
-		t.Fatal("a tampered download was kept")
-	}
-}
-
-func TestEachPlatformHasItsPackageAndItsChecksum(t *testing.T) {
-	cases := map[[3]string]string{
-		{"darwin", "arm64", ""}: "darwin-arm64", {"darwin", "amd64", ""}: "darwin-x64",
-		{"linux", "amd64", ""}: "linux-x64-gnu", {"linux", "amd64", "musl"}: "linux-x64-musl",
-		{"linux", "arm", ""}: "linux-arm", {"linux", "ppc64le", ""}: "linux-ppc64-gnu",
-		{"windows", "amd64", ""}: "win32-x64", {"freebsd", "amd64", ""}: "", {"linux", "riscv64", "musl"}: "",
-	}
-	for input, want := range cases {
-		got := agentPlatform(input[0], input[1], input[2] == "musl")
-		if got != want {
-			t.Errorf("%v: %q, want %q", input, got, want)
-		}
-		if _, known := agentIntegrity[got]; got != "" && !known {
-			t.Errorf("no checksum for %s", got)
-		}
-	}
-	if integrityVersion != AgentVersion {
-		t.Fatalf("integrity.go is of %s, the agent is %s: run go generate", integrityVersion, AgentVersion)
-	}
-}
-
 func TestW3CTraceContext(t *testing.T) {
 	rec := newRecording("http", "http", "GET /", attrMap{})
 
@@ -210,5 +148,64 @@ func TestW3CTraceContext(t *testing.T) {
 	}
 	if got := w3cSpan("01M4ZYCP0KQZZPC6SD1RJ4PBY5"); len(got) != 16 {
 		t.Fatalf("span id %q", got)
+	}
+}
+
+// The agent the SDK downloads is AgentVersion: its checksums were generated for it.
+func TestTheAgentsChecksumsAreOfAgentVersion(t *testing.T) {
+	if agentbin.Version != AgentVersion {
+		t.Fatalf("internal/agentbin/integrity.go is of %s, AgentVersion is %s: run make integrity", agentbin.Version, AgentVersion)
+	}
+}
+
+// EXPLAIN is offered once the app has a database: then the agent hears a new hello that says so.
+func TestExplainIsOfferedOnceADatabaseIsWrapped(t *testing.T) {
+	t.Setenv("TRACEPANEL_AGENT", "")
+	databasesMu.Lock()
+	saved := databases
+	databases = map[string]*database{}
+	databasesMu.Unlock()
+	t.Cleanup(func() { databasesMu.Lock(); databases = saved; databasesMu.Unlock() })
+	dir, err := os.MkdirTemp("", "tp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	socket := filepath.Join(dir, "agent.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_ = os.WriteFile(filepath.Join(dir, "agent.addr"), []byte("unix:"+socket), 0o644)
+	s := newSender(&starter{storeDir: dir}, Config{Service: "shop", StoreDir: dir, MaxTraces: 500})
+	hello := func() []any {
+		conn, err := listener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		reader := bufio.NewReader(conn)
+		line, _ := reader.ReadBytes('\n')
+		_, _ = conn.Write([]byte(`{"ok": true}` + "\n"))
+		var said struct {
+			Capabilities []any `json:"capabilities"`
+		}
+		_ = json.Unmarshal(line, &said)
+		readFrame(t, reader)
+		return said.Capabilities
+	}
+
+	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY5", Kind: "http", Attrs: attrMap{}})
+	before := hello()
+	if _, err := sql.Open(WrapDriver("fakedb", DBAlias("later")), "shop"); err != nil {
+		t.Fatal(err)
+	}
+	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY6", Kind: "http", Attrs: attrMap{}})
+	after := hello()
+
+	if !equalJSON(before, []any{}) || !equalJSON(after, []any{"explain"}) {
+		t.Fatalf("capabilities before %v, after %v", before, after)
 	}
 }

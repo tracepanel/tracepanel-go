@@ -41,6 +41,8 @@ type sender struct {
 	conn    net.Conn
 	retryAt time.Time
 	warned  bool
+	// Whether the connection's hello said the app answers EXPLAIN: once it has a database, it connects again to say so.
+	saidExplain bool
 }
 
 func newSender(starter *starter, config Config) *sender {
@@ -112,6 +114,11 @@ func (s *sender) send(batch []*traceDoc) {
 func (s *sender) connection() net.Conn {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.conn != nil && !s.saidExplain && hasDatabases() {
+		// The app has a database now, which it runs EXPLAIN on: the agent hears a new hello that says so.
+		_ = s.conn.Close()
+		s.conn, s.retryAt = nil, time.Time{}
+	}
 	if s.conn != nil || time.Now().Before(s.retryAt) {
 		return s.conn
 	}
@@ -181,10 +188,16 @@ func (s *sender) connect() net.Conn {
 		return nil
 	}
 	_ = conn.SetDeadline(time.Now().Add(connectTimeout))
-	// The agent finds the issues with this project's limits, and asks this app for EXPLAIN on its databases.
+	// The agent finds the issues with this project's limits, shows the app in the console's App tab, and asks this
+	// app for EXPLAIN once it has a database to run it on.
+	databases := hasDatabases()
+	capabilities := []string{}
+	if databases {
+		capabilities = append(capabilities, "explain")
+	}
 	hello, _ := json.Marshal(map[string]any{
 		"protocol": protocol, "max_traces": s.config.MaxTraces, "thresholds": thresholds(),
-		"service": s.config.Service, "capabilities": []string{"explain"},
+		"service": s.config.Service, "capabilities": capabilities, "app": aboutApp(s.config),
 	})
 	var answer struct {
 		OK    bool   `json:"ok"`
@@ -204,6 +217,7 @@ func (s *sender) connect() net.Conn {
 		return nil
 	}
 	_ = conn.SetDeadline(time.Time{})
+	s.saidExplain = databases
 	// What came with the answer is the start of the first request: the same reader goes on.
 	go s.serve(conn, reader)
 	return conn

@@ -420,3 +420,123 @@ func TestAUserWithoutANameIsTheirID(t *testing.T) {
 		t.Fatalf("a username in %v", doc.Attrs)
 	}
 }
+
+// The panel's Profile toggle asks a request to be profiled: the calls it makes ask the apps they reach the same.
+func TestTheAskToProfileTravelsDownTheChain(t *testing.T) {
+	recorded := record(t)
+	var asked []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Header.Get("X-Tracepanel-Profile"))
+	}))
+	defer other.Close()
+	handler := recorded.t.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request, _ := http.NewRequestWithContext(r.Context(), "GET", other.URL, nil)
+		if response, err := (&http.Client{Transport: WrapTransport(nil)}).Do(request); err == nil {
+			response.Body.Close()
+		}
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	get := func(header, cookie string) {
+		request, _ := http.NewRequest("GET", server.URL, nil)
+		if header != "" {
+			request.Header.Set("X-Tracepanel-Profile", header)
+		}
+		if cookie != "" {
+			request.AddCookie(&http.Cookie{Name: "tracepanel_profile", Value: cookie})
+		}
+		response, err := http.DefaultTransport.RoundTrip(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+	}
+
+	get("1", "")
+	get("", "memory")
+	get("", "")
+	get("nonsense", "")
+	recorded.wait(t, 4)
+
+	if !equalJSON(asked, []string{"1", "memory", "", ""}) {
+		t.Fatalf("asked %q", asked)
+	}
+}
+
+// Only an HTML page is held, for the badge: a large download goes out as it is written, without a flush.
+func TestAResponseThatIsNoPageIsntHeld(t *testing.T) {
+	recorded := record(t)
+	written := make(chan struct{})
+	chunk := strings.Repeat("x", 64<<10)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = io.WriteString(w, chunk)
+		<-written
+		_, _ = io.WriteString(w, "end")
+	})
+	server := httptest.NewServer(recorded.t.middleware(handler))
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make([]byte, len(chunk))
+	_, err = io.ReadFull(response.Body, first)
+	close(written)
+	rest, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+
+	if err != nil || string(first) != chunk || string(rest) != "end" {
+		t.Fatalf("read %d bytes then %q (%v)", len(first), rest, err)
+	}
+	if response.Header.Get("Tracepanel-Id") != recorded.wait(t, 1)[0].ID {
+		t.Fatal("the download has no trace id")
+	}
+}
+
+// A page without a Content-Type is told by its start, as net/http tells it, and gets the badge.
+func TestAPageWithoutAContentTypeGetsTheBadge(t *testing.T) {
+	recorded := record(t)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "<!DOCTYPE html><html><head></head><body>hi</body></html>")
+	})
+	server := httptest.NewServer(recorded.t.middleware(handler))
+	defer server.Close()
+	recorded.t.console.configured = "http://127.0.0.1:9/"
+
+	response, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	recorded.wait(t, 1)
+
+	if !strings.Contains(string(page), "<head><script src=\"http://127.0.0.1:9/widget.min.js\"") {
+		t.Fatalf("page %s", page)
+	}
+}
+
+// http.ResponseController reaches the connection through the held response.
+func TestAResponseControllerSetsTheDeadline(t *testing.T) {
+	recorded := record(t)
+	var deadlineErr error
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadlineErr = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute))
+		_, _ = io.WriteString(w, "{}")
+	})
+	server := httptest.NewServer(recorded.t.middleware(handler))
+	defer server.Close()
+
+	response, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	recorded.wait(t, 1)
+
+	if deadlineErr != nil {
+		t.Fatal(deadlineErr)
+	}
+}
