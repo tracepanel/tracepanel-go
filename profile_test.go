@@ -436,13 +436,15 @@ func TestAProfiledTraceSaysWhyItIs(t *testing.T) {
 		traceparent    bool
 		want           any
 	}{
-		"the header":           {header: "1", want: "header"},
-		"the header, memory":   {header: "memory", want: "header"},
-		"the panel's cookie":   {cookie: "1", want: "cookie"},
-		"the setting":          {all: true, want: "setting"},
-		"asked, with settings": {cookie: "1", all: true, want: "cookie"},
-		"nothing":              {want: nil},
-		"an ask it can't read": {header: "yes please", want: nil},
+		"the header":         {header: "1", want: "header"},
+		"the header, memory": {header: "memory", want: "header"},
+		"the panel's cookie": {cookie: "1", want: "cookie"},
+		"the setting":        {all: true, want: "setting"},
+		// The setting would profile it anyway: whatever asked too.
+		"asked, with settings":      {cookie: "1", all: true, want: "setting"},
+		"the header, with settings": {header: "1", all: true, want: "setting"},
+		"nothing":                   {want: nil},
+		"an ask it can't read":      {header: "yes please", want: nil},
 		// A traced caller that asks: a profiled one.
 		"the header of a caller": {header: "1", traceparent: true, want: "parent"},
 	}
@@ -471,6 +473,38 @@ func TestAProfiledTraceSaysWhyItIs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestALaterAskKeepsTheFirstReason(t *testing.T) {
+	t.Run("the header, then the code", func(t *testing.T) {
+		recorded := record(t)
+		recorded.t.profiler = newProfiler()
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /report", func(w http.ResponseWriter, r *http.Request) { Profile(r.Context()) })
+		request := httptest.NewRequest(http.MethodGet, "/report", nil)
+		request.Header.Set("X-Tracepanel-Profile", "1")
+
+		recorded.t.middleware(mux).ServeHTTP(httptest.NewRecorder(), request)
+		Flush(time.Second)
+
+		if doc := recorded.wait(t, 1)[0]; doc.Attrs["profile.reason"] != "header" || doc.Profile == nil {
+			t.Fatalf("profile.reason %v, profile %+v", doc.Attrs["profile.reason"], doc.Profile)
+		}
+	})
+
+	t.Run("the code, then a call's header", func(t *testing.T) {
+		recorded := record(t)
+		recorded.t.profiler = newProfiler()
+
+		trace := hook.Start("rpc", "rpc", "shop.Books/List", map[string]any{})
+		Profile(trace.Context(context.Background()))
+		trace.Ask("1")
+		trace.Finish()
+
+		if doc := recorded.wait(t, 1)[0]; doc.Attrs["profile.reason"] != "code" || doc.Profile == nil {
+			t.Fatalf("profile.reason %v, profile %+v", doc.Attrs["profile.reason"], doc.Profile)
+		}
+	})
 }
 
 func TestATaskOfAProfiledTraceSaysItsParentAskedForIt(t *testing.T) {

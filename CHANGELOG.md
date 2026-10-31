@@ -54,7 +54,9 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   `Config.Profile`) profiles every trace, and `tracepanel.Profile(ctx)`
   the rest of the trace from where the code asks; a profiled trace says
   why in `profile.reason` (`header`, `cookie`, `parent`, `setting`,
-  `code`). One CPU profile runs on from
+  `code`): `setting` when the setting would profile it anyway, else the
+  first ask that profiled it, as in the other SDKs. One CPU profile runs
+  on from
   one profiled trace to the next, cut once none ran for 200 ms (every 2 s
   under steady load), so back-to-back traces lose no samples to the
   profiler's restart (up to 100 ms on macOS); a trace running while a cut

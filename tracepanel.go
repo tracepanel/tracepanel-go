@@ -326,20 +326,21 @@ func (t *tracepanel) finish(rec *recording) {
 	})
 }
 
-// profileReason is why a trace is profiled, its root's profile.reason: what asked for it ("header": a request's
-// X-Tracepanel-Profile, a call's or a message's; "cookie": the panel's; "parent": a profiled caller's, a traced call
-// or a message asking, a task tracepanel.Go started), else "setting" when every trace is; "" when it isn't
-// profiled. tracepanel.Profile's is "code".
+// profileReason is why a trace is profiled, its root's profile.reason: "setting" when every trace is (the setting
+// would profile it anyway, whatever asked), else what asked for it ("header": a request's X-Tracepanel-Profile, a
+// call's or a message's; "cookie": the panel's; "parent": a profiled caller's, a traced call or a message asking, a
+// task tracepanel.Go started); "" when it isn't profiled. tracepanel.Profile's is "code". The first reason stays:
+// a later ask doesn't change it.
 func (t *tracepanel) profileReason(rec *recording) string {
 	switch {
 	case t.profiler == nil:
 		return ""
+	case t.profileAll:
+		return "setting"
 	case rec.asked != "" && rec.reason != "":
 		return rec.reason
 	case rec.asked != "":
 		return "header"
-	case t.profileAll:
-		return "setting"
 	}
 	return ""
 }

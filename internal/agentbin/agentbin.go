@@ -280,7 +280,8 @@ func executableName(platform string) string {
 }
 
 // CacheDir is TRACEPANEL_CACHE_DIR, else the user's cache, as every SDK keeps it: %LOCALAPPDATA%\tracepanel on
-// Windows; $XDG_CACHE_HOME/tracepanel, then ~/.cache/tracepanel elsewhere (macOS too).
+// Windows; $XDG_CACHE_HOME/tracepanel, then ~/.cache/tracepanel elsewhere (macOS too); the OS temp directory's
+// tracepanel when there is no home directory.
 func CacheDir() string {
 	return cacheDir(runtime.GOOS)
 }
