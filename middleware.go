@@ -286,7 +286,8 @@ func (h *heldResponse) finish() {
 	if h.page() {
 		if consoleURL := h.consoleURL(true); consoleURL != "" {
 			queries, dbMs, totalMs := h.rec.timing()
-			body = inject(body, scriptTag(consoleURL, h.rec.doc.ID, h.rec.attr("http.method"), h.status, queries, dbMs, totalMs))
+			framework, _ := h.rec.attr("tracepanel.framework").(string)
+			body = inject(body, scriptTag(consoleURL, h.rec.doc.ID, h.rec.attr("http.method"), h.status, queries, dbMs, totalMs, framework))
 		}
 	}
 	if header.Get("Content-Length") != "" || len(body) > 0 {
@@ -326,18 +327,22 @@ func (h *heldResponse) headers(header http.Header) {
 }
 
 // scriptTag is widget.min.js with the page's own request in data-tracepanel-* attributes.
-func scriptTag(consoleURL, id string, method any, status, queries int, dbMs, totalMs float64) string {
+func scriptTag(consoleURL, id string, method any, status, queries int, dbMs, totalMs float64, framework string) string {
 	api := html.EscapeString(consoleURL)
 	return fmt.Sprintf(`<script src="%swidget.min.js" data-tracepanel-api="%s" data-tracepanel-id="%s" `+
 		`data-tracepanel-method="%s" data-tracepanel-status="%d" data-tracepanel-total="%.1f" data-tracepanel-db="%.1f" `+
 		`data-tracepanel-queries="%d" data-tracepanel-issues="pending" data-tracepanel-runtime="%s"></script>`,
-		api, api, id, html.EscapeString(fmt.Sprint(method)), status, totalMs, dbMs, queries, html.EscapeString(runtimeLabel()))
+		api, api, id, html.EscapeString(fmt.Sprint(method)), status, totalMs, dbMs, queries, html.EscapeString(runtimeLabel(framework)))
 }
 
-// runtimeLabel is what the panel shows next to its logo: "Go 1.27 · net/http".
-func runtimeLabel() string {
+// runtimeLabel is what the panel shows next to its logo: "Go 1.27 · net/http", or the router an integration
+// traced the request with ("Go 1.27 · gin").
+func runtimeLabel(framework string) string {
+	if framework == "" {
+		framework = "net/http"
+	}
 	parts := strings.SplitN(goVersion(), ".", 3)
-	return "Go " + strings.Join(parts[:min(len(parts), 2)], ".") + " · net/http"
+	return "Go " + strings.Join(parts[:min(len(parts), 2)], ".") + " · " + framework
 }
 
 // inject puts the tag first in <head> (the badge wraps fetch before the page's scripts keep a reference to it).

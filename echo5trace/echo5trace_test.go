@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v5"
@@ -91,5 +92,19 @@ func TestNoRouteIsNamedByItsPath(t *testing.T) {
 	trace := recorder.Wait(t, 1)[0]
 	if response.Code != http.StatusNotFound || trace["name"] != "GET /nowhere" || len(tracetest.Spans(trace, "view")) != 0 {
 		t.Fatalf("response %d, trace %v %v", response.Code, trace["name"], trace["spans"])
+	}
+}
+
+func TestAnHTMLPageGetsTheBadgeNamingEcho(t *testing.T) {
+	recorder := tracetest.Record(t)
+	e := echo.New()
+	e.Use(Middleware())
+	e.GET("/", func(c *echo.Context) error { return c.HTML(http.StatusOK, "<html><head></head><body>hi</body></html>") })
+
+	response := get(e, "/")
+
+	recorder.Wait(t, 1)
+	if body := response.Body.String(); !strings.Contains(body, "widget.min.js") || !strings.Contains(body, ` · echo"`) {
+		t.Fatalf("body: %s", body)
 	}
 }

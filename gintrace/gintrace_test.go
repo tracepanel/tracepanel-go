@@ -113,7 +113,8 @@ func TestAnHTMLPageGetsTheBadge(t *testing.T) {
 	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	recorder.Wait(t, 1)
-	if body := response.Body.String(); !strings.Contains(body, "widget.min.js") {
+	// The badge names the router the request was traced with.
+	if body := response.Body.String(); !strings.Contains(body, "widget.min.js") || !strings.Contains(body, ` · gin"`) {
 		t.Fatalf("body: %s", body)
 	}
 }

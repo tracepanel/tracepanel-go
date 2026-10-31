@@ -186,7 +186,7 @@ func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 	if response.Header.Get("Tracepanel-Id") != doc.ID || !strings.Contains(response.Header.Get("Server-Timing"), `desc="2 queries"`) {
 		t.Errorf("headers: %v", response.Header)
 	}
-	if !strings.Contains(string(page), `<head><script src="http://127.0.0.1:9/widget.min.js"`) {
+	if !strings.Contains(string(page), `<head><script src="http://127.0.0.1:9/widget.min.js"`) || !strings.Contains(string(page), ` · net/http"`) {
 		t.Errorf("no badge in %s", page)
 	}
 }
