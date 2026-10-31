@@ -49,11 +49,29 @@ func origin() string {
 	}
 }
 
+// relative is a file of the project as the project sees it, from the working directory on, in forward slashes on
+// every OS (Go names a frame's file in forward slashes, D:/app/main.go on Windows, where the working directory is
+// D:\app); a file elsewhere (the standard library's, a module's) stays whole.
 func relative(file string) string {
-	if wd, err := os.Getwd(); err == nil {
-		if rel, ok := strings.CutPrefix(file, wd+"/"); ok {
-			return rel
-		}
+	wd, err := os.Getwd()
+	if err != nil {
+		return file
+	}
+	return relativeTo(file, wd, runtime.GOOS == "windows")
+}
+
+func relativeTo(file, wd string, windows bool) string {
+	if windows {
+		file = strings.ReplaceAll(file, `\`, "/")
+		wd = strings.ReplaceAll(wd, `\`, "/")
+	}
+	prefix := strings.TrimSuffix(wd, "/") + "/"
+	if len(file) <= len(prefix) {
+		return file
+	}
+	// Windows' paths are the same in any case: D:/app and d:/App.
+	if file[:len(prefix)] == prefix || windows && strings.EqualFold(file[:len(prefix)], prefix) {
+		return file[len(prefix):]
 	}
 	return file
 }
