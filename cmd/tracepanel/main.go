@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"slices"
+	"sync/atomic"
 	"syscall"
 
 	tracepanel "github.com/tracepanel/tracepanel-go"
@@ -72,8 +73,11 @@ func run(args []string) int {
 		}
 		return agent(agentArgs)
 	case "run":
+		if len(rest) > 0 && rest[0] == "--" {
+			rest = rest[1:]
+		}
 		if len(rest) == 0 {
-			fmt.Fprintln(os.Stderr, usage)
+			fmt.Fprintln(stderr, usage)
 			return 2
 		}
 		return foreground(app(rest), rest[0])
@@ -86,18 +90,11 @@ func run(args []string) int {
 		if at := slices.Index(rest, "--port"); at >= 0 && at+1 < len(rest) {
 			port = rest[at+1]
 		}
-		if len(command) > 0 {
-			// The app beside the console, until the console stops.
-			cmd := app(command)
-			cmd.Stdin = nil
-			if err := cmd.Start(); err != nil {
-				fmt.Fprintf(os.Stderr, "tracepanel: %v\n", err)
-				return 1
-			}
-			go func() { reportExit(rest[0], cmd.Wait()) }()
-			defer func() { _ = cmd.Process.Kill() }()
+		console := []string{"--dir", dir, "--serve", "127.0.0.1:" + port}
+		if len(command) == 0 {
+			return agent(console)
 		}
-		return agent([]string{"--dir", dir, "--serve", "127.0.0.1:" + port})
+		return beside(app(command), command[0], console)
 	case "agent":
 		return agent(rest)
 	case "version", "--version":
@@ -107,7 +104,7 @@ func run(args []string) int {
 		fmt.Println(usage)
 		return 0
 	}
-	fmt.Fprintln(os.Stderr, usage)
+	fmt.Fprintln(stderr, usage)
 	return 2
 }
 
@@ -119,11 +116,34 @@ func app(command []string) *exec.Cmd {
 	return cmd
 }
 
+// beside runs the app (`name`) beside the console, until the console stops: the console's exit code is the command's.
+// An app that fails on its own says how it ended on stderr; the one this command stops says nothing.
+func beside(cmd *exec.Cmd, name string, console []string) int {
+	cmd.Stdin = nil
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(stderr, "tracepanel: %v\n", err)
+		return 1
+	}
+	var stopping atomic.Bool
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		if err := cmd.Wait(); !stopping.Load() {
+			reportExit(name, err)
+		}
+	}()
+	code := agent(console)
+	stopping.Store(true)
+	_ = cmd.Process.Kill()
+	<-ended
+	return code
+}
+
 // agent runs the agent with args, its input and output this command's, and exits as it exits.
 func agent(args []string) int {
 	binary := agentbin.Path()
 	if binary == "" {
-		fmt.Fprintln(os.Stderr, "tracepanel: no tracepanel-agent could be had (set TRACEPANEL_AGENT_BIN, or put it on the PATH)")
+		fmt.Fprintln(stderr, "tracepanel: no tracepanel-agent could be had (set TRACEPANEL_AGENT_BIN, or put it on the PATH)")
 		return 1
 	}
 	cmd := exec.Command(binary, args...)
@@ -136,7 +156,7 @@ func agent(args []string) int {
 func foreground(cmd *exec.Cmd, name string) int {
 	signal.Ignore(os.Interrupt)
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "tracepanel: %v\n", err)
+		fmt.Fprintf(stderr, "tracepanel: %v\n", err)
 		return 1
 	}
 	terminate := make(chan os.Signal, 1)

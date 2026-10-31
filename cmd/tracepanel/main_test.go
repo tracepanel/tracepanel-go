@@ -185,3 +185,113 @@ func TestRunSaysWhichSignalEndedTheApp(t *testing.T) {
 		}
 	}
 }
+
+// `dev -- COMMAND` runs the command after --, whatever comes before it: its status line names the app, and the
+// console's exit code is the command's.
+func TestDevRunsTheCommandAfterDashDash(t *testing.T) {
+	binary, argsFile := fakeAgent(t)
+	t.Setenv("TRACEPANEL_AGENT_BIN", binary)
+	t.Setenv("TRACEPANEL_DIR", ".tracepanel")
+	// The console stays up until the app has ended.
+	t.Setenv("TRACEPANEL_TEST_AGENT_SLEEP", "2s")
+	t.Setenv("TRACEPANEL_TEST_EXIT", "5")
+	dir := t.TempDir()
+	standIn(t, dir, "shop")
+	t.Chdir(dir)
+	cases := []struct {
+		args    []string
+		console string
+	}{
+		{[]string{"dev", "--", "./shop", "--addr", ":9000"}, "--dir .tracepanel --serve 127.0.0.1:8765"},
+		{[]string{"dev", "--port", "9100", "--", "./shop", "--addr", ":9000"}, "--dir .tracepanel --serve 127.0.0.1:9100"},
+	}
+	for _, c := range cases {
+		_ = os.Remove(filepath.Join(dir, "seen"))
+		said := said(t)
+
+		code := run(c.args)
+		console, _ := os.ReadFile(argsFile)
+		seen, _ := os.ReadFile(filepath.Join(dir, "seen"))
+
+		if code != 3 || strings.TrimSpace(string(console)) != c.console {
+			t.Errorf("%v: exit %d, the console ran with %q", c.args, code, console)
+		}
+
+		if strings.TrimSpace(string(seen)) != "1 --addr :9000" {
+			t.Errorf("%v: the app saw %q", c.args, seen)
+		}
+
+		if said.String() != "tracepanel: ./shop exited with status 5\n" {
+			t.Errorf("%v: stderr %q", c.args, said.String())
+		}
+	}
+}
+
+// Without a command after --, `dev` is the console alone.
+func TestDevWithoutACommandIsTheConsole(t *testing.T) {
+	binary, argsFile := fakeAgent(t)
+	t.Setenv("TRACEPANEL_AGENT_BIN", binary)
+	t.Setenv("TRACEPANEL_DIR", ".tracepanel")
+	for _, args := range [][]string{{"dev"}, {"dev", "--"}, {"dev", "--port"}, {"dev", "--port", "9100", "--"}} {
+		said := said(t)
+
+		code := run(args)
+		console, _ := os.ReadFile(argsFile)
+
+		want := "--dir .tracepanel --serve 127.0.0.1:8765"
+		if len(args) == 4 {
+			want = "--dir .tracepanel --serve 127.0.0.1:9100"
+		}
+		if code != 3 || strings.TrimSpace(string(console)) != want || said.String() != "" {
+			t.Errorf("%v: exit %d, the console ran with %q, said %q", args, code, console, said.String())
+		}
+	}
+}
+
+// The app the console's end stops says nothing about how it ended.
+func TestDevStopsTheAppQuietly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a shell script app")
+	}
+	binary, _ := fakeAgent(t)
+	t.Setenv("TRACEPANEL_AGENT_BIN", binary)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shop"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	said := said(t)
+	start := time.Now()
+
+	code := run([]string{"dev", "--", "./shop"})
+
+	if code != 3 || said.String() != "" || time.Since(start) > 10*time.Second {
+		t.Fatalf("exit %d after %s, said %q", code, time.Since(start), said.String())
+	}
+}
+
+// `run` without a command says how to use it; `run -- COMMAND` is `run COMMAND`.
+func TestRunsEdgeCases(t *testing.T) {
+	dir := t.TempDir()
+	standIn(t, dir, "shop")
+	t.Chdir(dir)
+	t.Setenv("TRACEPANEL_TEST_EXIT", "3")
+	cases := []struct {
+		args []string
+		code int
+		said string
+	}{
+		{[]string{"run"}, 2, usage + "\n"},
+		{[]string{"run", "--"}, 2, usage + "\n"},
+		{[]string{"run", "--", "./shop"}, 3, "tracepanel: ./shop exited with status 3\n"},
+	}
+	for _, c := range cases {
+		said := said(t)
+
+		code := run(c.args)
+
+		if code != c.code || said.String() != c.said {
+			t.Errorf("%v: exit %d, said %q", c.args, code, said.String())
+		}
+	}
+}
