@@ -20,7 +20,8 @@ jobs:
   test:
     name: Go ${{ matrix.go }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # A cold module and build cache: every module's tests with the race detector take most of it.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -48,8 +49,9 @@ jobs:
             (cd "$module" && go vet ./... && go test -race ./...) || exit 1
             echo "::endgroup::"
           done
+      # Once: the newest Go's.
       - name: Every module built for Windows, amd64 and arm64
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.go == '1.27'
         run: make cross
 
   e2e:
