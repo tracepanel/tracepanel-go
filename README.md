@@ -339,9 +339,10 @@ take a build of the sibling `tracepanel` checkout, or the one
 does.
 
 Each integration is a module of its own, with a `replace` of the core to
-the checkout. A release tags the core (`v0.10.0`) and then each integration
-at the same version (`gintrace/v0.10.0`), each requiring the core of its
-tag.
+the checkout, which Go ignores in a dependency. A release tags the core
+(`v0.10.0`) and then, on the same commit, each integration at the same
+version (`gintrace/v0.10.0`): each must require the core of the tag, and
+is built without its `replace` against the core the module proxy has.
 
 ## License
 

@@ -40,6 +40,32 @@ Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
   linked to the request that started it, `tracepanel.Command` for a job
   or a command, and `tracepanel.SetUser(ctx, id, username)` for the
   signed-in user (the username stays on this machine).
+- The integrations, each a module of its own tagged with the core
+  (`gintrace/v0.10.0`), so the core keeps no dependencies:
+  - `gintrace.Middleware()` for gin, `echotrace.Middleware()` for Echo v4
+    and `echo5trace.Middleware()` for Echo v5: each request traced as
+    `WrapHandler` traces it, named by its route (`GET /books/:id`), its
+    handler a `view` span (not on Echo v5, which doesn't tell it), an
+    error a handler returns answered by Echo's error handler inside the
+    trace, and the badge naming the router (`Go 1.27 · gin`).
+  - `pgxtrace.New()`, pgx v5's tracer on a `pgx.Conn` or a `pgxpool.Pool`:
+    each statement, batch, copy and transaction as `WrapDriver` records
+    them, `EXPLAIN` from the console, and `pgxtrace.TxContext` for the
+    rest of a transaction's work.
+  - `redistrace.Instrument(rdb)`, go-redis v9: each command a span with
+    its key, the database and the server, a pipeline one span, so the
+    agent finds a command repeated for each item and duplicates.
+  - `zaptrace.WrapCore` with a `zaptrace.Context(ctx)` field, and
+    zerolog's `zerologtrace.Writer` and `zerologtrace.Hook`: their records
+    join the trace of the context they name, as `slog`'s do, fields
+    masked the same way.
+  - `grpctrace.ServerOptions()` and `grpctrace.DialOptions()`: each call
+    served an `rpc` trace named `Service/Method`, each call made a span,
+    a `traceparent` in the metadata both ways.
+  - `kafkatrace.WrapWriter` for segmentio/kafka-go: the messages sent a
+    `publish` span, each carrying a `traceparent`; `kafkatrace.Process`
+    makes each message handled a task trace linked to the publish that
+    sent it, in another app too.
 - The console's App tab: Go, the router, the app's module and the modules
   it depends on, and the build's settings that hold no secret.
 - `TRACEPANEL_N_PLUS_ONE_MIN_MS`, `TRACEPANEL_QUEUE_WAIT_MS` and
@@ -56,4 +82,5 @@ Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
 - A trace keeps at most 2,000 spans and 1,000 log records, as the agent
   stores it, and counts the rest.
 
-The SDK records on its own and has no dependencies: no OpenTelemetry.
+The SDK records on its own and has no dependencies: no OpenTelemetry. An
+integration depends on its library only.
