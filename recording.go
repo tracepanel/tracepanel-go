@@ -55,8 +55,10 @@ type recording struct {
 	reason string
 	// tracepanel.Profile profiles it, from where it was called.
 	byCode bool
-	// Its CPU profile, while it is profiled.
+	// Its CPU profile, while it is profiled; the collector's runs and its memory (when asked for) meanwhile.
 	profile *traceProfile
+	gc      *gcWindow
+	memory  *memoryWindow
 }
 
 func newRecording(kind, rootKind, name string, attrs attrMap) *recording {

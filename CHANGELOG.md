@@ -59,7 +59,13 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   under steady load), so back-to-back traces lose no samples to the
   profiler's restart (up to 100 ms on macOS); a trace running while a cut
   stops it says for how long (`tracepanel.profile_gap_ms`). Samples the
-  profiler lost are counted as `dropped`. Not memory: Go's heap profile is the process's.
+  profiler lost are counted as `dropped`. Every profile has the garbage
+  collector's runs and their pauses (`gc`). Asked for `memory` (or
+  `TRACEPANEL_PROFILE_MEMORY=1`), its `memory` too: the bytes the heap
+  allocated while the trace ran, its peak above the start and its net
+  change, from `runtime/metrics`. Go's heap can't be told per goroutine,
+  so these are the process's while the trace ran, marked `shared` when
+  another trace ran meanwhile, without allocation sites.
 - `tracepanel.Dump(ctx, values...)`, a debug print: each value with its
   expression, as Go syntax, its type and its length on stderr, and in a
   request's trace a dump in the call tree, secret-named values masked.

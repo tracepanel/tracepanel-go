@@ -393,13 +393,16 @@ func TestTheHelloSaysWhatTheAppDoes(t *testing.T) {
 		env  map[string]string
 		want []string
 	}{
-		"default":    {map[string]string{}, []string{"request", "profile"}},
-		"everything": {map[string]string{"TRACEPANEL_PROFILE": "1"}, []string{"request", "profile", "profile_all"}},
-		"nothing":    {map[string]string{"TRACEPANEL_PROFILE_ENABLED": "0", "TRACEPANEL_CAPTURE_REQUEST": "0"}, []string{}},
+		"default": {map[string]string{}, []string{"request", "profile", "profile_memory"}},
+		"everything": {
+			map[string]string{"TRACEPANEL_PROFILE": "1", "TRACEPANEL_PROFILE_MEMORY": "1"},
+			[]string{"request", "profile", "profile_memory", "profile_all", "profile_memory_all"},
+		},
+		"nothing": {map[string]string{"TRACEPANEL_PROFILE_ENABLED": "0", "TRACEPANEL_CAPTURE_REQUEST": "0"}, []string{}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			for _, key := range []string{"TRACEPANEL_PROFILE", "TRACEPANEL_PROFILE_ENABLED", "TRACEPANEL_CAPTURE_REQUEST"} {
+			for _, key := range []string{"TRACEPANEL_PROFILE", "TRACEPANEL_PROFILE_MEMORY", "TRACEPANEL_PROFILE_ENABLED", "TRACEPANEL_CAPTURE_REQUEST"} {
 				t.Setenv(key, c.env[key])
 			}
 			got := newTracepanel(withDefaults(Config{Service: "shop", StoreDir: t.TempDir()})).sender.capabilities
@@ -523,5 +526,98 @@ func TestCodeProfilesItsTraceFromWhereItAsks(t *testing.T) {
 	// Outside a trace: nothing to profile.
 	if ctx := context.Background(); Profile(ctx) != ctx {
 		t.Fatal("a context without a trace changed")
+	}
+}
+
+func TestARequestAskedForMemoryHasWhatTheHeapDid(t *testing.T) {
+	recorded := record(t)
+	recorded.t.profiler = newProfiler()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /export", func(w http.ResponseWriter, r *http.Request) {
+		buffer := make([]byte, 8<<20)
+		buffer[len(buffer)-1] = 1
+		// Longer than the heap's level is read every 10 ms.
+		time.Sleep(30 * time.Millisecond)
+		runtime.KeepAlive(buffer)
+	})
+	mux.HandleFunc("GET /time", func(w http.ResponseWriter, r *http.Request) {})
+	handler := recorded.t.middleware(mux)
+
+	memory := httptest.NewRequest(http.MethodGet, "/export", nil)
+	memory.AddCookie(&http.Cookie{Name: "tracepanel_profile", Value: "memory"})
+	handler.ServeHTTP(httptest.NewRecorder(), memory)
+	timeOnly := httptest.NewRequest(http.MethodGet, "/time", nil)
+	timeOnly.Header.Set("X-Tracepanel-Profile", "1")
+	handler.ServeHTTP(httptest.NewRecorder(), timeOnly)
+	Flush(time.Second)
+
+	for _, doc := range recorded.wait(t, 2) {
+		switch doc.Name {
+		case "GET /export":
+			got := doc.Profile.Memory
+			// It ran alone: the 8 MB are its own. The heap's level rose by them, less the garbage of before that a
+			// collection (the 8 MB call for one) freed meanwhile.
+			if got == nil || got.Allocated < 8<<20 || got.Peak < 4<<20 || got.Peak > got.Allocated || got.Shared ||
+				doc.Profile.GC == nil {
+				t.Fatalf("memory %+v, gc %+v", got, doc.Profile.GC)
+			}
+		case "GET /time":
+			// Not asked for its memory: the collector's runs only.
+			if doc.Profile.Memory != nil || doc.Profile.GC == nil {
+				t.Fatalf("memory %+v, gc %+v", doc.Profile.Memory, doc.Profile.GC)
+			}
+		}
+	}
+}
+
+func TestATracesMemoryIsSharedWhenAnotherRanMeanwhile(t *testing.T) {
+	recorded := record(t)
+	recorded.t.profiler = newProfiler()
+	recorded.t.profileMemory = true
+	recorded.t.profileAll = true
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	go func() {
+		_ = Command(context.Background(), "import", func(context.Context) error {
+			close(started)
+			<-release
+			return nil
+		})
+	}()
+	<-started
+	_ = Command(context.Background(), "report", func(context.Context) error { return nil })
+	close(release)
+	Flush(time.Second)
+
+	for _, doc := range recorded.wait(t, 2) {
+		if doc.Profile == nil || doc.Profile.Memory == nil || !doc.Profile.Memory.Shared {
+			t.Fatalf("%s: %+v", doc.Name, doc.Profile)
+		}
+	}
+}
+
+func TestAProfileHasTheCollectorsRunsWhileItsTraceRan(t *testing.T) {
+	recorded := record(t)
+	recorded.t.profiler = newProfiler()
+	recorded.t.profileAll = true
+
+	_ = Command(context.Background(), "compact", func(context.Context) error {
+		runtime.GC()
+		runtime.GC()
+		return nil
+	})
+	Flush(time.Second)
+
+	gc := recorded.wait(t, 1)[0].Profile.GC
+	var paused int64
+	for _, pause := range gc.Pauses {
+		paused += pause[1]
+		if pause[2] != 2 {
+			t.Fatalf("pause %v", pause)
+		}
+	}
+	if gc.Collections < 2 || len(gc.Pauses) != gc.Collections || gc.PauseUs != paused {
+		t.Fatalf("gc %+v", gc)
 	}
 }
