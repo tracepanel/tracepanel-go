@@ -39,8 +39,9 @@ func Middleware(next http.Handler) http.Handler {
 }
 
 // middleware traces every request, and gives each response what the badge reads: the trace's id and timing in
-// headers, and the badge's script in an HTML page. The response is held until the handler returns; one the handler
-// flushes (a stream) or takes over (a WebSocket) goes out as it is written, with the headers and without the badge.
+// headers, and the badge's script in an HTML page. A page is held until the handler returns, unless the handler
+// flushes it; any other response (JSON, a file, a stream) goes out as it is written, and one the handler takes over
+// (a WebSocket) is its own.
 func (t *tracepanel) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attrs := attrMap{"http.method": r.Method, "http.path": r.URL.Path, "tracepanel.framework": "net/http"}
@@ -155,7 +156,8 @@ func handlerName(handler http.Handler) string {
 	return strings.TrimSuffix(runtime.FuncForPC(value.Pointer()).Name(), "-fm")
 }
 
-// heldResponse keeps the handler's response until it returns, to add the trace's headers and the badge.
+// heldResponse keeps an HTML page until the handler returns, to add the trace's headers (with the whole request's
+// timing) and the badge; any other response goes out as it is written, with the headers as they are by then.
 type heldResponse struct {
 	w       http.ResponseWriter
 	header  http.Header
@@ -178,6 +180,15 @@ func (h *heldResponse) Write(data []byte) (int, error) {
 	if !h.wrote {
 		h.WriteHeader(http.StatusOK)
 	}
+	if !h.passing && h.body.Len() == 0 {
+		if h.header.Get("Content-Type") == "" && h.header.Get("Content-Encoding") == "" && len(data) > 0 {
+			// As net/http would: the type of what starts the body.
+			h.header.Set("Content-Type", http.DetectContentType(data))
+		}
+		if !h.page() {
+			h.pass()
+		}
+	}
 	if h.passing {
 		return h.w.Write(data)
 	}
@@ -192,8 +203,19 @@ func (h *heldResponse) WriteHeader(status int) {
 	h.status = status
 	if h.passing {
 		h.w.WriteHeader(status)
+	} else if h.header.Get("Content-Type") != "" && !h.page() {
+		h.pass()
 	}
 }
+
+// page: the response is an HTML page the badge goes into, held until the handler returns. Anything else (JSON, a
+// file, a compressed body) goes out as it is written.
+func (h *heldResponse) page() bool {
+	return strings.Contains(h.header.Get("Content-Type"), "text/html") && h.header.Get("Content-Encoding") == ""
+}
+
+// Unwrap is the ResponseWriter underneath, for http.ResponseController (its deadlines, full duplex).
+func (h *heldResponse) Unwrap() http.ResponseWriter { return h.w }
 
 // Flush starts the response now: a stream (server-sent events, a long download) is written as it comes.
 func (h *heldResponse) Flush() {
@@ -260,7 +282,7 @@ func (h *heldResponse) finish() {
 	}
 	h.headers(header)
 	body := h.body.Bytes()
-	if strings.Contains(header.Get("Content-Type"), "text/html") && header.Get("Content-Encoding") == "" {
+	if h.page() {
 		if consoleURL := h.consoleURL(true); consoleURL != "" {
 			queries, dbMs, totalMs := h.rec.timing()
 			body = inject(body, scriptTag(consoleURL, h.rec.doc.ID, h.rec.attr("http.method"), h.status, queries, dbMs, totalMs))
