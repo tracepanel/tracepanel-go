@@ -549,16 +549,27 @@ func (c *tracedConn) begin(ctx context.Context, query string, args []driver.Name
 	if s == nil {
 		return statement{}
 	}
+	raw := make([]any, len(args))
+	for i, arg := range args {
+		raw[i] = arg.Value
+	}
+	name, attrs := statementAttrs(c.db, query, raw)
+	return statement{rec: s.rec, parent: c.parent(s), name: name, attrs: attrs, start: time.Now()}
+}
+
+// statementAttrs are a statement's span name and attributes, whatever library ran it: its one-line text, its
+// fingerprint, its parameters, and the line of the app's code that ran it.
+func statementAttrs(db *database, query string, args []any) (string, attrMap) {
 	params := make([]any, 0, min(len(args), maxParams))
 	for _, arg := range args[:min(len(args), maxParams)] {
-		params = append(params, param(arg.Value))
+		params = append(params, param(arg))
 	}
 	encoded, _ := json.Marshal(params)
 	digest := sha1.Sum(encoded)
-	attrs := c.db.attrs()
-	parsed := parse(query)
-	attrs["db.statement"] = parsed.text
-	attrs["db.fingerprint"] = parsed.fingerprint
+	attrs := db.attrs()
+	stmt := parse(query)
+	attrs["db.statement"] = stmt.text
+	attrs["db.fingerprint"] = stmt.fingerprint
 	attrs["db.params"] = params
 	attrs["db.params_hash"] = nil
 	if len(params) > 0 {
@@ -567,7 +578,7 @@ func (c *tracedConn) begin(ctx context.Context, query string, args []driver.Name
 	attrs["db.many"] = false
 	attrs["code.origin"] = nilIfEmpty(origin())
 	attrs["code.template"] = nil
-	return statement{rec: s.rec, parent: c.parent(s), name: parsed.name, attrs: attrs, start: time.Now()}
+	return stmt.name, attrs
 }
 
 // end records the statement as it ran; a query's rows are counted as they are read.
@@ -609,6 +620,15 @@ func param(value any) any {
 		}
 		return param(inner)
 	default:
+		// An integer or a float of any size, as a library other than database/sql passes it.
+		switch number := reflect.ValueOf(v); number.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return number.Int()
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return number.Uint()
+		case reflect.Float32, reflect.Float64:
+			return number.Float()
+		}
 		return truncate(fmt.Sprint(v))
 	}
 }
