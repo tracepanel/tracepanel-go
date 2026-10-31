@@ -51,8 +51,12 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
   `runtime/pprof`, its goroutines labeled so that only its own samples
   are its, with any number of requests at once; a task it starts with
   `tracepanel.Go` is profiled too, and `TRACEPANEL_PROFILE=1` (or
-  `Config.Profile`) profiles every trace. Samples the profiler lost are
-  counted as `dropped`. Not memory: Go's heap profile is the process's.
+  `Config.Profile`) profiles every trace. One CPU profile runs on from
+  one profiled trace to the next, cut once none ran for 200 ms (every 2 s
+  under steady load), so back-to-back traces lose no samples to the
+  profiler's restart (up to 100 ms on macOS); a trace running while a cut
+  stops it says for how long (`tracepanel.profile_gap_ms`). Samples the
+  profiler lost are counted as `dropped`. Not memory: Go's heap profile is the process's.
 - `tracepanel.Dump(ctx, values...)`, a debug print: each value with its
   expression, as Go syntax, its type and its length on stderr, and in a
   request's trace a dump in the call tree, secret-named values masked.

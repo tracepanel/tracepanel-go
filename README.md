@@ -144,7 +144,15 @@ Go's profiler samples 100 times a second of CPU time: a request that takes
 less than 10 ms of CPU may have no sample, and time spent waiting (for the
 database, a lock) isn't in the profile, which the trace's spans show. An
 app that runs a CPU profile of its own (`/debug/pprof/profile`) gets no
-Tracepanel profiles meanwhile. Memory isn't profiled: Go's heap profile is
+Tracepanel profiles meanwhile.
+
+Go's profiler hands its samples over only once it is stopped, and on
+macOS stopping it takes up to 100 ms, when nothing is sampled. So it runs
+on from one profiled request to the next, and is cut once none has run
+for 200 ms (or, under steady load, every 2 s): back-to-back requests are
+sampled without a gap, and a profile reaches the console a moment after
+its request. A request that runs while a cut stops the profiler says for
+how long (`tracepanel.profile_gap_ms`). Memory isn't profiled: Go's heap profile is
 the whole process's, with no labels, so what one request allocated can't
 be told.
 
