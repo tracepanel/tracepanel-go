@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -89,11 +90,16 @@ func TestTheAgentGetsTheHelloTheTracesAndAnEXPLAINOnTheAppsDatabase(t *testing.T
 		}
 	}
 
+	app, _ := hello["app"].(map[string]any)
+	delete(hello, "app")
 	if !equalJSON(hello, map[string]any{
 		"protocol": 1, "max_traces": 500, "thresholds": map[string]any{"n_plus_one": 5}, "service": "shop",
 		"capabilities": []string{"explain"},
 	}) {
 		t.Fatalf("hello %v", hello)
+	}
+	if settings, _ := app["settings"].(map[string]any); settings["TRACEPANEL_SERVICE"] != "shop" || settings["GOOS"] != runtime.GOOS {
+		t.Fatalf("app %v", app)
 	}
 	if traces := frames["traces"].([]any); len(traces) != 1 || traces[0].(map[string]any)["id"] != "01M4ZYCP0KQZZPC6SD1RJ4PBY5" {
 		t.Fatalf("traces %v", frames["traces"])
@@ -149,5 +155,57 @@ func TestW3CTraceContext(t *testing.T) {
 func TestTheAgentsChecksumsAreOfAgentVersion(t *testing.T) {
 	if agentbin.Version != AgentVersion {
 		t.Fatalf("internal/agentbin/integrity.go is of %s, AgentVersion is %s: run make integrity", agentbin.Version, AgentVersion)
+	}
+}
+
+// EXPLAIN is offered once the app has a database: then the agent hears a new hello that says so.
+func TestExplainIsOfferedOnceADatabaseIsWrapped(t *testing.T) {
+	t.Setenv("TRACEPANEL_AGENT", "")
+	databasesMu.Lock()
+	saved := databases
+	databases = map[string]*database{}
+	databasesMu.Unlock()
+	t.Cleanup(func() { databasesMu.Lock(); databases = saved; databasesMu.Unlock() })
+	dir, err := os.MkdirTemp("", "tp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	socket := filepath.Join(dir, "agent.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_ = os.WriteFile(filepath.Join(dir, "agent.addr"), []byte("unix:"+socket), 0o644)
+	s := newSender(&starter{storeDir: dir}, Config{Service: "shop", StoreDir: dir, MaxTraces: 500})
+	hello := func() []any {
+		conn, err := listener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		reader := bufio.NewReader(conn)
+		line, _ := reader.ReadBytes('\n')
+		_, _ = conn.Write([]byte(`{"ok": true}` + "\n"))
+		var said struct {
+			Capabilities []any `json:"capabilities"`
+		}
+		_ = json.Unmarshal(line, &said)
+		readFrame(t, reader)
+		return said.Capabilities
+	}
+
+	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY5", Kind: "http", Attrs: attrMap{}})
+	before := hello()
+	if _, err := sql.Open(WrapDriver("fakedb", DBAlias("later")), "shop"); err != nil {
+		t.Fatal(err)
+	}
+	s.submit(&traceDoc{ID: "01M4ZYCP0KQZZPC6SD1RJ4PBY6", Kind: "http", Attrs: attrMap{}})
+	after := hello()
+
+	if !equalJSON(before, []any{}) || !equalJSON(after, []any{"explain"}) {
+		t.Fatalf("capabilities before %v, after %v", before, after)
 	}
 }

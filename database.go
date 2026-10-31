@@ -209,6 +209,13 @@ func remember(db *database) {
 	databases[db.alias] = db
 }
 
+// hasDatabases: the app opened a database through WrapDriver or WrapConnector, which EXPLAIN can run on.
+func hasDatabases() bool {
+	databasesMu.Lock()
+	defer databasesMu.Unlock()
+	return len(databases) > 0
+}
+
 func databaseNamed(alias string) *database {
 	databasesMu.Lock()
 	defer databasesMu.Unlock()

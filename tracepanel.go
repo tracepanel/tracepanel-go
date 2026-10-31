@@ -17,7 +17,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,7 +36,7 @@ type Config struct {
 	StoreDir string
 	// The app's module path: frames under it are the project's code. The main module's, read from the build.
 	Module string
-	// The most traces the agent keeps for the project (2000).
+	// The most traces the agent keeps for the project: TRACEPANEL_MAX_TRACES, else 2000.
 	MaxTraces int
 	// The route of a request, for a router that doesn't set Request.Pattern as ServeMux does: "/books/{id}".
 	Route func(*http.Request) string
@@ -120,6 +122,9 @@ func withDefaults(config Config) Config {
 	}
 	if config.MaxTraces == 0 {
 		config.MaxTraces = 2000
+		if value, err := strconv.Atoi(os.Getenv("TRACEPANEL_MAX_TRACES")); err == nil && value > 0 {
+			config.MaxTraces = value
+		}
 	}
 	appModule.Store(&config.Module)
 	return config
@@ -132,18 +137,59 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// thresholdNames are the agent's limits, by the variable that sets each.
+var thresholdNames = map[string]string{
+	"TRACEPANEL_N_PLUS_ONE_THRESHOLD": "n_plus_one",
+	"TRACEPANEL_N_PLUS_ONE_MIN_MS":    "n_plus_one_min_ms",
+	"TRACEPANEL_SLOW_SQL_MS":          "slow_sql_ms",
+	"TRACEPANEL_LONG_TRANSACTION_MS":  "long_transaction_ms",
+	"TRACEPANEL_SLOW_HTTP_MS":         "slow_http_ms",
+	"TRACEPANEL_QUEUE_WAIT_MS":        "queue_wait_ms",
+	"TRACEPANEL_LARGE_RESULT_ROWS":    "large_result_rows",
+}
+
+// The limits that may be set per database too: `100,snowflake=3000`.
+var byDatabase = map[string]bool{"slow_sql_ms": true, "long_transaction_ms": true}
+
+func thresholdVariables() []string {
+	names := make([]string, 0, len(thresholdNames))
+	for name := range thresholdNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // thresholds are the limits the agent finds the issues with, those the environment sets: the agent's own otherwise.
-func thresholds() map[string]int {
-	out := map[string]int{}
-	for key, variable := range map[string]string{
-		"n_plus_one":          "TRACEPANEL_N_PLUS_ONE_THRESHOLD",
-		"slow_sql_ms":         "TRACEPANEL_SLOW_SQL_MS",
-		"long_transaction_ms": "TRACEPANEL_LONG_TRANSACTION_MS",
-		"slow_http_ms":        "TRACEPANEL_SLOW_HTTP_MS",
-		"large_result_rows":   "TRACEPANEL_LARGE_RESULT_ROWS",
-	} {
-		if value, err := strconv.Atoi(os.Getenv(variable)); err == nil && value > 0 {
-			out[key] = value
+// TRACEPANEL_SLOW_SQL_MS and TRACEPANEL_LONG_TRANSACTION_MS may set one per database too, by its db.system:
+// `100,snowflake=3000` is 100 ms for every database but Snowflake's, held to 3 s (slow_sql_ms_by_db). A value that
+// isn't a whole number is left out.
+func thresholds() map[string]any {
+	out := map[string]any{}
+	for variable, key := range thresholdNames {
+		for _, entry := range strings.Split(os.Getenv(variable), ",") {
+			system, value, perDatabase := strings.Cut(strings.TrimSpace(entry), "=")
+			if !perDatabase {
+				value = system
+			}
+			number, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil || number < 0 {
+				continue
+			}
+			if !perDatabase {
+				out[key] = number
+				continue
+			}
+			system = strings.ToLower(strings.TrimSpace(system))
+			if !byDatabase[key] || system == "" {
+				continue
+			}
+			systems, _ := out[key+"_by_db"].(map[string]int)
+			if systems == nil {
+				systems = map[string]int{}
+				out[key+"_by_db"] = systems
+			}
+			systems[system] = number
 		}
 	}
 	return out
