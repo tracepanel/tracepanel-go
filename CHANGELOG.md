@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 (Unreleased)
+## 0.10.0 (2026-10-31)
 
 Downloads `tracepanel-agent` 0.10.0 the first time. The first release of
 Tracepanel for Go, with the agent and the other SDKs at 0.10. Tags are
