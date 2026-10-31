@@ -5,6 +5,10 @@
 //	server := grpc.NewServer(grpctrace.ServerOptions()...)
 //	conn, err := grpc.NewClient(target, append(grpctrace.DialOptions(), grpc.WithTransportCredentials(creds))...)
 //
+// A call asks the server to profile its trace with the x-tracepanel-profile metadata key, as a request asks with the
+// X-Tracepanel-Profile header ("1", or "memory"); a call made in a profiled trace asks the same, so the servers down
+// the chain profile their part.
+//
 // The interceptors go first in a chain: a recovery interceptor before them gets the panics they record.
 package grpctrace
 
@@ -89,16 +93,18 @@ func serve(ctx context.Context, fullMethod string) (context.Context, hook.Trace)
 		"rpc.system": "grpc", "rpc.service": service, "rpc.method": method,
 		"service.role": "web", "tracepanel.framework": "grpc",
 	}
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if values := md.Get(traceparent); len(values) > 0 {
-			for key, value := range hook.Incoming(values[0]) {
-				attrs[key] = value
-			}
+	md, _ := metadata.FromIncomingContext(ctx)
+	if values := md.Get(traceparent); len(values) > 0 {
+		for key, value := range hook.Incoming(values[0]) {
+			attrs[key] = value
 		}
 	}
 	trace := hook.Start("rpc", "rpc", service+"/"+method, attrs)
 	if trace == nil {
 		return ctx, nil
+	}
+	if values := md.Get(hook.ProfileMetadata); len(values) > 0 {
+		trace.Ask(values[0])
 	}
 	return trace.Context(ctx), trace
 }
@@ -191,8 +197,8 @@ func (s *clientStream) SendMsg(message any) error {
 
 func (s *clientStream) end(err error) { s.once.Do(func() { finish(s.span, err) }) }
 
-// call opens a call's span, and is ctx with its traceparent in the outgoing metadata. None for a call outside a
-// trace, or one that carries a traceparent already.
+// call opens a call's span, and is ctx with its traceparent in the outgoing metadata, and the ask to profile when its
+// trace was asked to be profiled. None for a call outside a trace, or one that carries a traceparent already.
 func call(ctx context.Context, fullMethod string, cc *grpc.ClientConn) (context.Context, hook.Span) {
 	if !hook.Enabled() || !hook.Traced(ctx) {
 		return ctx, nil
@@ -213,7 +219,13 @@ func call(ctx context.Context, fullMethod string, cc *grpc.ClientConn) (context.
 		return ctx, nil
 	}
 	span.Set("w3c.span_id", span.W3CID())
-	return metadata.AppendToOutgoingContext(ctx, traceparent, span.Traceparent()), span
+	pairs := []string{traceparent, span.Traceparent()}
+	if asked := hook.Asked(ctx); asked != "" {
+		if md, _ := metadata.FromOutgoingContext(ctx); len(md.Get(hook.ProfileMetadata)) == 0 {
+			pairs = append(pairs, hook.ProfileMetadata, asked)
+		}
+	}
+	return metadata.AppendToOutgoingContext(ctx, pairs...), span
 }
 
 // finish ends a call's span with its status: any code but OK fails it.

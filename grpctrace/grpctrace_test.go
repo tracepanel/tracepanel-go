@@ -2,14 +2,17 @@ package grpctrace
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
+	"sort"
 	"testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -236,5 +239,40 @@ func TestServer(t *testing.T) {
 		if got := server(target); !tracetest.Equal(got, want) {
 			t.Errorf("server(%q) = %v, want %v", target, got, want)
 		}
+	}
+}
+
+func TestACallAsksTheServerToProfileItsTrace(t *testing.T) {
+	recorder := tracetest.RecordProfiles(t, false)
+	conn := connect(t)
+
+	// Asked by the call's metadata, as a request asks with X-Tracepanel-Profile; then by a profiled caller; then not.
+	asking := metadata.AppendToOutgoingContext(context.Background(), "x-tracepanel-profile", "1")
+	if err := invoke(asking, conn, "Place"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracepanel.Command(context.Background(), "checkout", func(ctx context.Context) error {
+		return invoke(tracepanel.Profile(ctx), conn, "Place")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := invoke(context.Background(), conn, "Place"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A profiled trace reaches the agent once its profile is cut, after the others: in no order.
+	got := []string{}
+	for _, trace := range recorder.Wait(t, 4) {
+		got = append(got, fmt.Sprint(trace["kind"], " ", tracetest.Attrs(trace)["profile.reason"], " ", trace["profile"] != nil))
+	}
+	sort.Strings(got)
+	want := []string{
+		"command code true",
+		"rpc <nil> false",
+		"rpc header true",
+		"rpc header true",
+	}
+	if !tracetest.Equal(got, want) {
+		t.Fatalf("traces %v", got)
 	}
 }

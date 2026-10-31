@@ -25,8 +25,21 @@ type Recorder struct {
 // Record turns Tracepanel on for the test (service "shop"): its traces are kept by the recorder.
 func Record(t testing.TB) *Recorder {
 	t.Helper()
+	return record(t, hook.Capture)
+}
+
+// RecordProfiles is Record with the profiler on: a trace asked to be is profiled, every one when all is true
+// (TRACEPANEL_PROFILE=1).
+func RecordProfiles(t testing.TB, all bool) *Recorder {
+	t.Helper()
+	return record(t, func(service string, deliver func([]byte)) func() {
+		return hook.CaptureProfiles(service, all, deliver)
+	})
+}
+
+func record(t testing.TB, capture func(string, func([]byte)) func()) *Recorder {
 	r := &Recorder{}
-	restore := hook.Capture("shop", func(encoded []byte) {
+	restore := capture("shop", func(encoded []byte) {
 		var doc Doc
 		if err := json.Unmarshal(encoded, &doc); err != nil {
 			panic(err)

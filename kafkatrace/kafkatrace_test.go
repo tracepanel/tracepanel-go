@@ -3,6 +3,8 @@ package kafkatrace
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -158,5 +160,52 @@ func TestOutsideATraceMessagesAreSentAsTheyAre(t *testing.T) {
 
 	if len(b.sent) != 1 || len(b.sent[0].Headers) != 0 {
 		t.Fatalf("sent: %v", b.sent)
+	}
+}
+
+func TestAMessageOfAProfiledTraceAsksItsHandlerToProfileToo(t *testing.T) {
+	recorder := tracetest.RecordProfiles(t, false)
+	b := &broker{}
+	w := writer(b, "orders")
+	own := []kafka.Header{{Key: "traceparent", Value: []byte("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")}}
+
+	if err := tracepanel.Command(context.Background(), "checkout", func(ctx context.Context) error {
+		ctx = tracepanel.Profile(ctx)
+		return w.WriteMessages(ctx, kafka.Message{Value: []byte("1")}, kafka.Message{Value: []byte("2"), Headers: own})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder.Wait(t, 1)
+	for _, msg := range append(b.sent, kafka.Message{Value: []byte("3")}) {
+		msg.Topic = "orders"
+		if err := Process(context.Background(), msg, handleOrder); err != nil {
+			t.Fatal(err)
+		}
+	}
+	asked := kafka.Message{Topic: "orders", Headers: []kafka.Header{{Key: "x-tracepanel-profile", Value: []byte("memory")}}}
+	if err := Process(context.Background(), asked, handleOrder); err != nil {
+		t.Fatal(err)
+	}
+
+	// The message with a traceparent of its own still asks; the caller's headers are left as they were.
+	if header(b.sent[0].Headers, "tracepanel-profile") != "1" || header(b.sent[1].Headers, "tracepanel-profile") != "1" ||
+		len(own) != 1 {
+		t.Fatalf("sent %v, the caller's %v", b.sent, own)
+	}
+	// A profiled trace reaches the agent once its profile is cut, after the others: in no order.
+	got := []string{}
+	for _, trace := range recorder.Wait(t, 5) {
+		got = append(got, fmt.Sprint(trace["kind"], " ", tracetest.Attrs(trace)["profile.reason"], " ", trace["profile"] != nil))
+	}
+	sort.Strings(got)
+	want := []string{
+		"command code true",
+		"task <nil> false",
+		"task header true",
+		"task header true",
+		"task header true",
+	}
+	if !tracetest.Equal(got, want) {
+		t.Fatalf("traces %v", got)
 	}
 }

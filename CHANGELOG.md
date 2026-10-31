@@ -94,11 +94,15 @@ hand back what they were given; `TRACEPANEL_ENABLED=0` always wins.
     masked the same way.
   - `grpctrace.ServerOptions()` and `grpctrace.DialOptions()`: each call
     served an `rpc` trace named `Service/Method`, each call made a span,
-    a `traceparent` in the metadata both ways.
+    a `traceparent` in the metadata both ways. A call with the
+    `x-tracepanel-profile` metadata key (`1`, as the HTTP header) has its
+    trace profiled, and a call made in a profiled trace asks the same.
   - `kafkatrace.WrapWriter` for segmentio/kafka-go: the messages sent a
     `publish` span, each carrying a `traceparent`; `kafkatrace.Process`
     makes each message handled a task trace linked to the publish that
-    sent it, in another app too.
+    sent it, in another app too. A message sent in a profiled trace
+    carries `tracepanel-profile`, as the other SDKs' messages do, and its
+    handler's trace is profiled too.
 - The console's App tab: Go, the router, the app's module and the modules
   it depends on, and the build's settings that hold no secret.
 - `TRACEPANEL_N_PLUS_ONE_MIN_MS`, `TRACEPANEL_QUEUE_WAIT_MS` and
