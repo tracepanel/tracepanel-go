@@ -1,8 +1,9 @@
 name: CI
 
 # gofmt, go vet and the tests with the race detector, of the core and of each integration (a module of its own, as
-# `make lint` loops them), on every Go the modules support; then an app against the real agent (e2e/), the one the
-# SDK downloads.
+# `make lint` loops them), on every Go the modules support, on Linux, macOS and Windows; every module built for
+# Windows on amd64 and arm64; then an app against the real agent (e2e/), the one the SDK downloads, on Linux and on
+# Windows (its .exe from the agent's win32 package, started and stopped there). A release waits for all of it.
 on:
   push:
     branches: [main]
@@ -17,7 +18,7 @@ permissions:
 
 jobs:
   test:
-    name: Go ${{ matrix.go }}
+    name: Go ${{ matrix.go }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -47,11 +48,18 @@ jobs:
             (cd "$module" && go vet ./... && go test -race ./...) || exit 1
             echo "::endgroup::"
           done
+      - name: Every module built for Windows, amd64 and arm64
+        if: runner.os == 'Linux'
+        run: make cross
 
   e2e:
-    name: An app against the real agent
-    runs-on: ubuntu-latest
+    name: An app against the real agent on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -61,6 +69,7 @@ jobs:
       # The agent is AgentVersion's, downloaded from npm by the SDK itself and checked against its checksum, as an
       # app gets it; its OpenTelemetry port stays closed.
       - name: gofmt
+        if: runner.os != 'Windows'
         run: test -z "$(gofmt -l e2e)" || (gofmt -l e2e && exit 1)
       - run: go vet ./...
         working-directory: e2e

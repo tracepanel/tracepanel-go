@@ -74,7 +74,7 @@ func Downloaded() string {
 	}
 	downloadMu.Lock()
 	defer downloadMu.Unlock()
-	binary := filepath.Join(CacheDir(), "agent", Version, platform, executableName(platform))
+	binary := cached(platform)
 	if verified[binary] {
 		return binary
 	}
@@ -260,6 +260,12 @@ var Platforms = []string{
 func isMusl() bool {
 	matches, _ := filepath.Glob("/lib/ld-musl-*")
 	return len(matches) > 0
+}
+
+// cached is where the platform's agent at Version is kept: <cache>/agent/<version>/<platform>/tracepanel-agent
+// (.exe on Windows).
+func cached(platform string) string {
+	return filepath.Join(CacheDir(), "agent", Version, platform, executableName(platform))
 }
 
 func executableName(platform string) string {

@@ -1,6 +1,7 @@
 name: Release
 
-# A tag that names a version (v0.10.0, as Go modules name them) releases it: once CI has passed on the tagged commit,
+# A tag that names a version (v0.10.0, as Go modules name them) releases it: once CI has passed on the tagged commit
+# (Windows' jobs among its jobs: the tests and an app against the real agent there),
 # and the tag agrees with Version, AgentVersion is of its minor (a patch of its own) and the agent's checksums are of
 # AgentVersion, it gets a GitHub release, and the Go module proxy is asked for it, so pkg.go.dev and `go get` have it
 # at once. Then each integration (gintrace, pgxtrace and the others, a module of its own) is tagged on the same
@@ -28,7 +29,16 @@ jobs:
             result=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push" \
               --jq '.workflow_runs[0] | "\(.status) \(.conclusion)"')
             case "$result" in
-              "completed success") echo "CI passed on $GITHUB_SHA" && exit 0 ;;
+              "completed success")
+                # Windows is where go run and the agent's download and start differ most: its jobs must have run.
+                run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push" --jq '.workflow_runs[0].id')
+                windows=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+                  --jq '[.jobs[] | select(.name | endswith("on windows-latest")) | select(.conclusion == "success")] | length')
+                if [ "$windows" -lt 2 ]; then
+                  echo "::error::CI on $GITHUB_SHA passed without its Windows jobs (tests, e2e): $windows of 2"
+                  exit 1
+                fi
+                echo "CI passed on $GITHUB_SHA, on Windows too" && exit 0 ;;
               completed*) echo "::error::CI on $GITHUB_SHA: $result" && exit 1 ;;
               "null null") [ "$attempt" -ge 10 ] && echo "::error::no CI run of main on $GITHUB_SHA" && exit 1 ;;
             esac

@@ -1,5 +1,3 @@
-//go:build !windows
-
 // Package e2e runs a Go app against the real agent: WrapHandler and tracepanel.Driver on SQLite, a page with an N+1, and the
 // agent's API read back, its trace, its SQL spans and the n+1 issue; then a request asked to be profiled, its
 // profile and what it carried (the Request tab). The agent is TRACEPANEL_AGENT_BIN, else a build
@@ -19,8 +17,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -28,17 +26,20 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// exe is what a program's name ends with: .exe on Windows.
+var exe = map[bool]string{true: ".exe"}[runtime.GOOS == "windows"]
+
 // agent starts the agent on `dir` through cmd/tracepanel, until the test ends; its console's URL.
 func agent(t *testing.T, dir string) string {
 	t.Helper()
-	command := filepath.Join(t.TempDir(), "tracepanel")
+	command := filepath.Join(t.TempDir(), "tracepanel"+exe)
 	build := exec.Command("go", "build", "-o", command, "github.com/tracepanel/tracepanel-go/cmd/tracepanel")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build cmd/tracepanel: %v\n%s", err, out)
 	}
 	env := append(os.Environ(), "TRACEPANEL_DIR="+dir, "TRACEPANEL_OTLP=off")
 	if os.Getenv("TRACEPANEL_AGENT_BIN") == "" {
-		sibling, _ := filepath.Abs(filepath.Join("..", "..", "tracepanel", "target", "debug", "tracepanel-agent"))
+		sibling, _ := filepath.Abs(filepath.Join("..", "..", "tracepanel", "target", "debug", "tracepanel-agent"+exe))
 		if _, err := os.Stat(sibling); err == nil {
 			env = append(env, "TRACEPANEL_AGENT_BIN="+sibling)
 		}
@@ -47,14 +48,14 @@ func agent(t *testing.T, dir string) string {
 	cmd := exec.Command(command, "dev", "--port", "0")
 	cmd.Env, cmd.Stdout, cmd.Stderr = env, &output, &output
 	// Its own process group: the agent under it stops with it.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		killGroup(cmd)
 		<-exited
 	})
 	deadline := time.After(2 * time.Minute)

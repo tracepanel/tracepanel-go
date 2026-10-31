@@ -38,9 +38,12 @@ var devRun = sync.OnceValue(func() bool {
 })
 
 var (
-	// Where `go run` links a binary: its work directory (under os.TempDir(), or GOTMPDIR), $WORK/b001/exe/<name>.
+	// Where `go run` links a binary: its work directory, os.MkdirTemp(GOTMPDIR or os.TempDir(), "go-build"), as
+	// $WORK/b001/exe/<name> (<name>.exe on Windows): /tmp/go-build1234/b001/exe/shop,
+	// C:\Users\ann\AppData\Local\Temp\go-build1234\b001\exe\shop.exe.
 	goRunWork = regexp.MustCompile(`/go-build[0-9]+/b[0-9]+/exe/[^/]+$`)
-	// Where `go run` keeps the binary it built since Go 1.24, in the build cache: go-build/<2 hex>/<64 hex>-d/<name>.
+	// Where `go run` keeps the binary it built since Go 1.24, in the build cache (os.UserCacheDir()/go-build:
+	// %LocalAppData%\go-build on Windows, or GOCACHE): <2 hex>/<64 hex>-d/<name>.
 	goRunCached = regexp.MustCompile(`(^|/)[0-9a-f]{2}/[0-9a-f]{64}-d/[^/]+$`)
 )
 
@@ -56,9 +59,13 @@ func goRunBinary(executable, gocache string) bool {
 	if !goRunCached.MatchString(path) {
 		return false
 	}
-	if strings.Contains(path, "/go-build/") {
+	if strings.Contains(strings.ToLower(path), "/go-build/") {
 		return true
 	}
-	cache := strings.ReplaceAll(filepath.Clean(gocache), `\`, "/")
-	return gocache != "" && gocache != "off" && strings.HasPrefix(path, strings.TrimSuffix(cache, "/")+"/")
+	if gocache == "" || gocache == "off" {
+		return false
+	}
+	cache := strings.TrimSuffix(strings.ReplaceAll(filepath.Clean(gocache), `\`, "/"), "/") + "/"
+	// Windows' paths are the same in any case: C:\Cache and c:\cache.
+	return len(path) > len(cache) && strings.EqualFold(path[:len(cache)], cache)
 }

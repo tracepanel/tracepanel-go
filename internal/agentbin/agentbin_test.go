@@ -135,7 +135,8 @@ func TestEachPlatformHasItsPackageAndItsChecksum(t *testing.T) {
 		{"darwin", "arm64", ""}: "darwin-arm64", {"darwin", "amd64", ""}: "darwin-x64",
 		{"linux", "amd64", ""}: "linux-x64-gnu", {"linux", "amd64", "musl"}: "linux-x64-musl",
 		{"linux", "arm", ""}: "linux-arm", {"linux", "ppc64le", ""}: "linux-ppc64-gnu",
-		{"windows", "amd64", ""}: "win32-x64", {"freebsd", "amd64", ""}: "", {"linux", "riscv64", "musl"}: "",
+		{"windows", "amd64", ""}: "win32-x64", {"windows", "arm64", ""}: "win32-arm64", {"windows", "386", ""}: "win32-ia32",
+		{"windows", "arm", ""}: "", {"freebsd", "amd64", ""}: "", {"linux", "riscv64", "musl"}: "",
 	}
 	for input, want := range cases {
 		got := Platform(input[0], input[1], input[2] == "musl")
@@ -147,5 +148,39 @@ func TestEachPlatformHasItsPackageAndItsChecksum(t *testing.T) {
 		if !strings.HasPrefix(checksums[platform], "sha512-") {
 			t.Errorf("no checksum for %s", platform)
 		}
+	}
+}
+
+// Windows' agent, wherever the test runs: its package's binary is tracepanel-agent.exe, kept as that in
+// %LOCALAPPDATA%\tracepanel, and run by its name.
+func TestWindowsAgentIsTheExeInLocalAppData(t *testing.T) {
+	local := t.TempDir()
+	t.Setenv("TRACEPANEL_CACHE_DIR", "")
+	t.Setenv("LOCALAPPDATA", local)
+	for _, arch := range []string{"amd64", "arm64", "386"} {
+		platform := Platform("windows", arch, false)
+		want := filepath.Join(local, "tracepanel", "agent", Version, platform, "tracepanel-agent.exe")
+		if got := cached(platform); got != want || !strings.HasPrefix(platform, "win32-") {
+			t.Errorf("%s: %s %q, want %q", arch, platform, got, want)
+		}
+	}
+	tgz := platformPackage(t, "tracepanel-agent.exe", []byte(script))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(tgz) }))
+	defer server.Close()
+	binary := cached("win32-arm64")
+
+	// Twice: the second replaces the first, as another process's download would.
+	first := download(server.URL+"/agent.tgz", Checksum([]byte(script)), "win32-arm64", binary)
+	second := download(server.URL+"/agent.tgz", Checksum([]byte(script)), "win32-arm64", binary)
+	data, _ := os.ReadFile(binary)
+	left, _ := filepath.Glob(filepath.Join(filepath.Dir(binary), "*.part"))
+
+	if first != nil || second != nil || string(data) != script || len(left) != 0 {
+		t.Fatalf("%v, %v: %q, partial files %v", first, second, data, left)
+	}
+	// A package without the .exe isn't Windows' agent.
+	linux := platformPackage(t, "tracepanel-agent", []byte(script))
+	if _, err := Entry(linux, "package/bin/"+executableName("win32-x64")); err == nil {
+		t.Fatal("the binary of another platform")
 	}
 }
