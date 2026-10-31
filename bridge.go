@@ -141,11 +141,23 @@ func (b *bridgeTrace) Context(ctx context.Context) context.Context {
 	return within(ctx, b.rec, b.rec.root.ID)
 }
 
+// Ask: the call or the message asks to be profiled. From a traced caller (its traceparent, or the publish that sent
+// the message: a profiled trace asking the same of what it calls), the reason is "parent"; else "header".
 func (b *bridgeTrace) Ask(value string) {
-	if asked := askedOf(value); asked != "" {
-		b.rec.mu.Lock()
-		b.rec.asked, b.rec.reason = asked, "header"
-		b.rec.mu.Unlock()
+	asked := askedOf(value)
+	if asked == "" {
+		return
+	}
+	b.rec.mu.Lock()
+	defer b.rec.mu.Unlock()
+	b.rec.asked, b.rec.reason = asked, "header"
+	if b.rec.doc.Attrs["w3c.parent_span_id"] != nil {
+		b.rec.reason = "parent"
+	}
+	for _, link := range b.rec.doc.Links {
+		if link.Kind == "sent_by" {
+			b.rec.reason = "parent"
+		}
 	}
 }
 

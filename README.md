@@ -154,9 +154,10 @@ your code can profile the rest of the trace it runs in:
 ctx = tracepanel.Profile(ctx)
 ```
 
-A profiled trace says why in `profile.reason`: `header`, `cookie` (the
-panel's toggle), `parent` (started by a profiled trace), `setting` or
-`code`.
+A profiled trace says why in `profile.reason`: `header` (a request's
+`X-Tracepanel-Profile`), `cookie` (the panel's toggle), `parent` (a
+profiled caller asked: a traced call or message, or a task it started),
+`setting` or `code`.
 
 Go's profiler samples 100 times a second of CPU time: a request that takes
 less than 10 ms of CPU may have no sample, and time spent waiting (for the

@@ -202,8 +202,8 @@ func TestAMessageOfAProfiledTraceAsksItsHandlerToProfileToo(t *testing.T) {
 		"command code true",
 		"task <nil> false",
 		"task header true",
-		"task header true",
-		"task header true",
+		"task parent true",
+		"task parent true",
 	}
 	if !tracetest.Equal(got, want) {
 		t.Fatalf("traces %v", got)
