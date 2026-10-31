@@ -1,6 +1,7 @@
 name: CI
 
-# gofmt, go vet and the tests with the race detector, on every Go the module supports.
+# gofmt, go vet and the tests with the race detector, on every Go the module supports; then an app against the real
+# agent (e2e/), the one the SDK downloads.
 on:
   push:
     branches: [main]
@@ -38,3 +39,22 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go test -race ./...
+
+  e2e:
+    name: An app against the real agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: e2e/go.sum
+      # The agent is AgentVersion's, downloaded from npm by the SDK itself and checked against its checksum, as an
+      # app gets it; its OpenTelemetry port stays closed.
+      - name: gofmt
+        run: test -z "$(gofmt -l e2e)" || (gofmt -l e2e && exit 1)
+      - run: go vet ./...
+        working-directory: e2e
+      - run: go test -race -count=1 ./...
+        working-directory: e2e
