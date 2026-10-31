@@ -51,6 +51,10 @@ func (t *tracepanel) middleware(next http.Handler) http.Handler {
 		}
 		rec := t.begin("http", "http", r.Method+" "+r.URL.Path, attrs)
 		rec.asked, rec.reason = profileAsked(r)
+		if rec.reason == "header" && attrs["w3c.parent_span_id"] != nil {
+			// Asked by a traced caller: one profiled, asking the same of the apps it calls.
+			rec.reason = "parent"
+		}
 		ctx, restore := t.profile(r.Context(), rec)
 		defer restore()
 		req := r.WithContext(within(ctx, rec, rec.root.ID))

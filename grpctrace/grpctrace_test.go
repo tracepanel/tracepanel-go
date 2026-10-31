@@ -270,7 +270,7 @@ func TestACallAsksTheServerToProfileItsTrace(t *testing.T) {
 		"command code true",
 		"rpc <nil> false",
 		"rpc header true",
-		"rpc header true",
+		"rpc parent true",
 	}
 	if !tracetest.Equal(got, want) {
 		t.Fatalf("traces %v", got)

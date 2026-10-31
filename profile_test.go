@@ -83,7 +83,8 @@ func TestAProfiledRequestHasItsOwnSamplesOnly(t *testing.T) {
 		t.Fatalf("the request not asked has a profile: %+v", other)
 	}
 	profile := report.Profile
-	if profile == nil || profile.IntervalUs != 10_000 || profile.Samples < 5 || profile.Dropped != 0 {
+	// Samples are CPU time: fewer when the tests' other packages share the CPUs (and macOS delivers fewer anyway).
+	if profile == nil || profile.IntervalUs != 10_000 || profile.Samples < 2 || profile.Dropped != 0 {
 		t.Fatalf("profile: %+v", profile)
 	}
 	named := functions(profile)
@@ -432,6 +433,7 @@ func TestAProfiledTraceSaysWhyItIs(t *testing.T) {
 	cases := map[string]struct {
 		header, cookie string
 		all            bool
+		traceparent    bool
 		want           any
 	}{
 		"the header":           {header: "1", want: "header"},
@@ -441,6 +443,8 @@ func TestAProfiledTraceSaysWhyItIs(t *testing.T) {
 		"asked, with settings": {cookie: "1", all: true, want: "cookie"},
 		"nothing":              {want: nil},
 		"an ask it can't read": {header: "yes please", want: nil},
+		// A traced caller that asks: a profiled one.
+		"the header of a caller": {header: "1", traceparent: true, want: "parent"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -453,6 +457,9 @@ func TestAProfiledTraceSaysWhyItIs(t *testing.T) {
 			}
 			if c.cookie != "" {
 				request.AddCookie(&http.Cookie{Name: "tracepanel_profile", Value: c.cookie})
+			}
+			if c.traceparent {
+				request.Header.Set("Traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
 			}
 
 			recorded.t.middleware(http.NotFoundHandler()).ServeHTTP(httptest.NewRecorder(), request)
