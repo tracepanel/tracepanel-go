@@ -170,9 +170,13 @@ anyway, the reason is `setting`, whatever asked too. Otherwise it is the
 first ask that profiled the trace, and a later one (`tracepanel.Profile` in
 a trace its request's header profiled) doesn't change it.
 
-Go's profiler samples 100 times a second of CPU time: a request that takes
-less than 10 ms of CPU may have no sample, and time spent waiting (for the
-database, a lock) isn't in the profile, which the trace's spans show. An
+The profiler samples every millisecond of CPU time, as the other SDKs
+do (Go's own rate is every 10 ms; `TRACEPANEL_PROFILE_INTERVAL_MS` or
+`Config.ProfileInterval` sets another): a request that takes less than a
+millisecond of CPU may have no sample, and time spent waiting (for the
+database, a lock) isn't in the profile, which the trace's spans show. On a
+CPU-bound handler a profiled request costs a few percent more CPU at
+this rate than at Go's own, and a request that isn't profiled nothing. An
 app that runs a CPU profile of its own (`/debug/pprof/profile`) gets no
 Tracepanel profiles meanwhile.
 
@@ -304,9 +308,11 @@ database's kind comes from the dialector (`postgres`, `mysql`, `sqlite`,
 a query came from.
 
 The rows a query returned are there for `Find`, `First`, `Pluck`, `Count`
-and for `Scan` (`db.Raw(...).Scan(&rows)`), whose count GORM tells its
-logger: the plugin wraps the `gorm.Config.Logger` to read it (a
-`Session` given a logger of its own after `db.Use` goes without). Not for
+and for `Scan` (`db.Raw(...).Scan(&rows)`, into a slice, a struct or one
+value), whose count GORM tells its logger: the plugin wraps the
+`gorm.Config.Logger` to read it, whichever it is (`logger.Discard`, your
+own, or none). A `Session` given a logger of its own after `db.Use`, or a
+logger assigned to `db.Logger` after it, goes without. Not for
 `Rows()` and `Row()`: your code reads those rows from the `*sql.Rows` that
 `database/sql` hands over, which nothing can watch. With
 `tracepanel.Driver` as the dialector's `DriverName` (in place of the
@@ -451,6 +457,7 @@ comes from the environment:
 | `MaxTraces` | `TRACEPANEL_MAX_TRACES` | `2000`, the traces the agent keeps |
 | `Profile` | `TRACEPANEL_PROFILE` | off; `1` profiles every trace, not only those the panel asks for |
 | `ProfileMemory` | `TRACEPANEL_PROFILE_MEMORY` | off; `1` measures every profiled trace's memory, not only those asked for it |
+| `ProfileInterval` | `TRACEPANEL_PROFILE_INTERVAL_MS` | `1`, how often (in ms of CPU time) a profiled trace is sampled |
 | | `TRACEPANEL_PROFILE_ENABLED` | on; `0` profiles nothing |
 | | `TRACEPANEL_CAPTURE_REQUEST` | on; `0` keeps no headers, query, cookies or body |
 | | `TRACEPANEL_AGENT_BIN` | the one the SDK downloads |

@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A profile samples every millisecond of CPU time, as the Python and
+  JavaScript SDKs do, not every 10 ms (Go's own rate): a request of a
+  hundred milliseconds has a hundred samples, not ten, and the console
+  says "one every 1 ms". `TRACEPANEL_PROFILE_INTERVAL_MS` (or
+  `Config.ProfileInterval`) sets another rate. The runtime's warning that
+  the rate was set before `runtime/pprof` started never reaches stderr.
+  A profiled request on a CPU-bound handler costs about 4% more CPU than
+  at Go's rate.
+
+### Fixed
+
+- gormtrace: `Scan` into one value through a pointer
+  (`var avg *float64; db.Select("AVG(rating)").Scan(&avg)`) or into a
+  named type said it returned 0 rows, as GORM counts it; it says 1.
+- gormtrace: a database whose `gorm.Config.Logger` is nil gets its rows
+  counted (and `Scan` no longer panics there), as with `logger.Discard`
+  or any other logger.
+
 ## 0.10.0 (2026-10-31)
 
 Downloads `tracepanel-agent` 0.10.0 the first time. The first release of
