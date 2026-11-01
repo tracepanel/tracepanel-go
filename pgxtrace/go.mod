@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/jackc/pgx/v5 v5.12.0
-	github.com/tracepanel/tracepanel-go v0.10.0
+	github.com/tracepanel/tracepanel-go v0.10.1
 )
 
 require (

@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/glebarez/sqlite v1.11.0
-	github.com/tracepanel/tracepanel-go v0.10.0
+	github.com/tracepanel/tracepanel-go v0.10.1
 	github.com/tracepanel/tracepanel-go/gormtrace v0.0.0
 	gorm.io/gorm v1.31.2
 )
