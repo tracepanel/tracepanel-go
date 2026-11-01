@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- On macOS a profile's CPU time is right: the kernel delivers only a
+  fifth to a third of the profiler's signals to code that stays out of
+  the kernel, so a 60 ms CPU-bound handler had some 17 samples at "one
+  every 1 ms" and the rest of its time showed as waiting. A profile now
+  says what its samples stand for, the process's CPU time over them
+  ("one every 3.5 ms"). Linux takes every sample, one a millisecond.
+
 ## 0.10.3 (2026-11-01)
 
 ### Changed
