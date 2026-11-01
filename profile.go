@@ -19,7 +19,9 @@ import (
 // started from a profiled trace (tracepanel.Go) is profiled too.
 //
 // The profiler is the process's, sampling every goroutine on a CPU every millisecond of CPU time (Go's own rate is
-// every 10 ms: profile_rate.go), or Config.ProfileInterval, TRACEPANEL_PROFILE_INTERVAL_MS. A profiled trace's goroutine carries a pprof label naming the trace (tracepanel_trace), which the
+// every 10 ms: profile_rate.go), or Config.ProfileInterval, TRACEPANEL_PROFILE_INTERVAL_MS. On macOS (and the other
+// platforms whose profiler runs off one process-wide timer) the kernel delivers fewer samples than that: a profile
+// says how much CPU time its samples stand for, the process's CPU time over them (cputime_setitimer.go). A profiled trace's goroutine carries a pprof label naming the trace (tracepanel_trace), which the
 // goroutines it starts inherit; a sample is the trace's when it carries its label. That holds with any number of
 // requests at once: no sample of another request is taken for this one. The profile is the CPU's time only: a
 // goroutine waiting (for the database, a lock, a sleep) isn't sampled.
@@ -126,6 +128,10 @@ type profiler struct {
 	// What starts and stops the CPU profile: runtime/pprof's, the tests' own.
 	startCPU func(*bytes.Buffer) error
 	stopCPU  func()
+	// The process's CPU time, where samples fall short of the rate (cputime_setitimer.go), and its reading when the
+	// profile started: a sample then stands for the profile's CPU time over its samples.
+	cpuTime func() time.Duration
+	cpuAt   time.Duration
 	// How long the profile runs on after the last profiled trace ended, and the longest an ended trace waits for
 	// its profile while others keep running.
 	cutIdle, cutWait time.Duration
@@ -148,6 +154,7 @@ func newProfiler(interval ...time.Duration) *profiler {
 		intervalUs: int64(time.Second/time.Microsecond) / int64(hz),
 		startCPU:   func(out *bytes.Buffer) error { return startCPUProfile(out, hz) },
 		stopCPU:    pprof.StopCPUProfile,
+		cpuTime:    processCPUTime,
 		cutIdle:    defaultCutIdle,
 		cutWait:    defaultCutWait,
 	}
@@ -189,6 +196,9 @@ func (p *profiler) begin() {
 	}
 	p.out = out
 	p.running = true
+	if p.cpuTime != nil {
+		p.cpuAt = p.cpuTime()
+	}
 }
 
 // end ends a trace's profile: done gets it (and how long the profiler was stopped while the trace ran) once a cut
@@ -280,8 +290,15 @@ func (p *profiler) cut() {
 
 	var parsed *cpuProfile
 	if wasRunning {
+		var used time.Duration
+		if p.cpuTime != nil {
+			used = p.cpuTime() - p.cpuAt
+		}
 		p.stopCPU()
 		parsed, _ = parseCPUProfile(out.Bytes(), profileLabel)
+		if parsed != nil && used > 0 {
+			parsed.periodNs = sampledPeriod(parsed, used)
+		}
 	}
 
 	p.mu.Lock()
@@ -339,6 +356,20 @@ func (p *profiler) share(parsed *cpuProfile) {
 	for _, tp := range p.traces {
 		tp.dropped += lost
 	}
+}
+
+// sampledPeriod is how much CPU time a sample of the profile stands for, given the process's CPU time while it ran:
+// that time over all its samples (every goroutine's, lost ones too), when the kernel delivered fewer than the rate
+// asked for; the rate's period otherwise.
+func sampledPeriod(parsed *cpuProfile, used time.Duration) int64 {
+	var samples int64
+	for _, sample := range parsed.samples {
+		samples += sample.count
+	}
+	if samples == 0 {
+		return parsed.periodNs
+	}
+	return max(parsed.periodNs, int64(used)/samples)
 }
 
 func lostSample(function string) bool {

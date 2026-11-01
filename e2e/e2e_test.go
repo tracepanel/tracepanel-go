@@ -507,9 +507,10 @@ func profiledReport(t *testing.T, server *httptest.Server, console string) {
 			t.Errorf("%s: %v, want %v", key, found.Attrs[key], want)
 		}
 	}
-	// Its profile: where its CPU time went, the app's function in it.
+	// Its profile: where its CPU time went, the app's function in it. One sample a millisecond, but on macOS, where a
+	// sample stands for more (the kernel delivers fewer).
 	profile := found.Profile
-	if profile == nil || profile.IntervalUs != 1000 || profile.Samples == 0 || len(profile.Stacks) == 0 ||
+	if profile == nil || profile.IntervalUs < 1000 || runtime.GOOS != "darwin" && profile.IntervalUs != 1000 || profile.Samples == 0 || len(profile.Stacks) == 0 ||
 		profile.Memory == nil || profile.Memory.Allocated == 0 || profile.GC == nil {
 		t.Fatalf("profile %+v", profile)
 	}
