@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.2 (2026-11-01)
+
+### Changed
+
+- Runs `tracepanel-agent` 0.10.2: a profile's Your code holds only the app's
+  frames, and the console says how much of the trace was on the CPU, with
+  the rest shown as waiting.
+
 ## 0.10.1 (2026-11-01)
 
 ### Changed
