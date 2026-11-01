@@ -87,7 +87,7 @@ func init() {
 	hook.CaptureProfiles = func(service string, all bool, deliver func([]byte)) func() {
 		restore := capture(service, deliver)
 		t := active.Load()
-		t.profiler, t.profileAll = newProfiler(), all
+		t.profiler, t.profileAll = newProfiler(t.config.ProfileInterval), all
 		return func() {
 			t.profiler.wait(5 * time.Second)
 			restore()
