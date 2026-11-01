@@ -57,6 +57,9 @@ type Config struct {
 	// Measure every profiled trace's memory (what the heap allocated while it ran), not only a request's that asks
 	// for "memory": TRACEPANEL_PROFILE_MEMORY=1.
 	ProfileMemory bool
+	// How often the profiler samples a profiled trace, in CPU time: TRACEPANEL_PROFILE_INTERVAL_MS, else every
+	// millisecond (Go's own profiler samples every 10 ms). At most every 100 µs.
+	ProfileInterval time.Duration
 }
 
 // tracepanel records an app's traces and sends them to its agent.
@@ -138,7 +141,7 @@ func newTracepanel(config Config) *tracepanel {
 		captureRequest: !off(os.Getenv("TRACEPANEL_CAPTURE_REQUEST")),
 	}
 	if !off(os.Getenv("TRACEPANEL_PROFILE_ENABLED")) {
-		t.profiler = newProfiler()
+		t.profiler = newProfiler(config.ProfileInterval)
 	}
 	t.sender = newSender(start, config)
 	// The console offers what the app does: the Request tab, recording a request with a profile (with its memory
@@ -171,6 +174,12 @@ func withDefaults(config Config) Config {
 	}
 	if !config.ProfileMemory {
 		config.ProfileMemory = on(os.Getenv("TRACEPANEL_PROFILE_MEMORY"))
+	}
+	if config.ProfileInterval <= 0 {
+		config.ProfileInterval = defaultProfileInterval
+		if value, err := strconv.Atoi(os.Getenv("TRACEPANEL_PROFILE_INTERVAL_MS")); err == nil && value > 0 {
+			config.ProfileInterval = time.Duration(value) * time.Millisecond
+		}
 	}
 	if config.StoreDir == "" {
 		config.StoreDir = envOr("TRACEPANEL_DIR", ".tracepanel")

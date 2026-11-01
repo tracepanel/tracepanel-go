@@ -2,6 +2,7 @@ package tracepanel
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"log/slog"
 	"runtime/pprof"
@@ -17,8 +18,8 @@ import (
 // request asks with the X-Tracepanel-Profile: 1 header or the panel's tracepanel_profile=1 cookie, and a task
 // started from a profiled trace (tracepanel.Go) is profiled too.
 //
-// The profiler is the process's, sampling every goroutine on a CPU 100 times a second, so a sample stands for 10 ms
-// of CPU time. A profiled trace's goroutine carries a pprof label naming the trace (tracepanel_trace), which the
+// The profiler is the process's, sampling every goroutine on a CPU every millisecond of CPU time (Go's own rate is
+// every 10 ms: profile_rate.go), or Config.ProfileInterval, TRACEPANEL_PROFILE_INTERVAL_MS. A profiled trace's goroutine carries a pprof label naming the trace (tracepanel_trace), which the
 // goroutines it starts inherit; a sample is the trace's when it carries its label. That holds with any number of
 // requests at once: no sample of another request is taken for this one. The profile is the CPU's time only: a
 // goroutine waiting (for the database, a lock, a sleep) isn't sampled.
@@ -45,8 +46,6 @@ const (
 	maxProfileDepth = 128
 	// Distinct stacks one trace keeps; the rest are counted as one "(other)" frame, so a profile stays small.
 	maxProfileStacks = 2000
-	// runtime/pprof samples 100 times a second.
-	defaultIntervalUs = 10_000
 )
 
 type profileDoc struct {
@@ -81,6 +80,8 @@ type traceProfile struct {
 	index   map[cpuFrame]int
 	samples int64
 	dropped int64
+	// How often the profiler meant to sample, for a profile whose samples don't say.
+	intervalUs int64
 	// The profiler couldn't run while it did (another CPU profile had it).
 	missed bool
 	// Ended: its profile waits for the next cut.
@@ -120,6 +121,8 @@ type profiler struct {
 	pending int
 	drained chan struct{}
 	warned  bool
+	// How often it samples, in microseconds of CPU time: what a profile says when its samples don't.
+	intervalUs int64
 	// What starts and stops the CPU profile: runtime/pprof's, the tests' own.
 	startCPU func(*bytes.Buffer) error
 	stopCPU  func()
@@ -133,20 +136,27 @@ const (
 	defaultCutWait = 2 * time.Second
 )
 
-func newProfiler() *profiler {
+// newProfiler is a profiler sampling every interval of CPU time (at most every 100 µs): every millisecond, unless
+// one is given.
+func newProfiler(interval ...time.Duration) *profiler {
+	hz := profileHz(0)
+	if len(interval) > 0 {
+		hz = profileHz(interval[0])
+	}
 	return &profiler{
-		traces:   map[string]*traceProfile{},
-		startCPU: func(out *bytes.Buffer) error { return pprof.StartCPUProfile(out) },
-		stopCPU:  pprof.StopCPUProfile,
-		cutIdle:  defaultCutIdle,
-		cutWait:  defaultCutWait,
+		traces:     map[string]*traceProfile{},
+		intervalUs: int64(time.Second/time.Microsecond) / int64(hz),
+		startCPU:   func(out *bytes.Buffer) error { return startCPUProfile(out, hz) },
+		stopCPU:    pprof.StopCPUProfile,
+		cutIdle:    defaultCutIdle,
+		cutWait:    defaultCutWait,
 	}
 }
 
 // start profiles a trace from now on: the context its goroutine runs with carries the trace's label (the caller sets
 // it on the goroutine, pprof.SetGoroutineLabels).
 func (p *profiler) start(ctx context.Context, id string) (context.Context, *traceProfile) {
-	tp := &traceProfile{id: id, stacks: map[string]*profileStack{}, index: map[cpuFrame]int{}}
+	tp := &traceProfile{id: id, stacks: map[string]*profileStack{}, index: map[cpuFrame]int{}, intervalUs: p.intervalUs}
 	p.mu.Lock()
 	p.traces[id] = tp
 	p.live++
@@ -413,7 +423,7 @@ func stackKey(keys []int) string {
 // document is the trace's `profile`: its stacks, the most seen first, and only the frames they name. A trace no
 // sample saw (it took less CPU than a sample stands for) has one with no stacks: its 0 samples say why.
 func (tp *traceProfile) document(parsed *cpuProfile) *profileDoc {
-	interval := int64(defaultIntervalUs)
+	interval := cmp.Or(tp.intervalUs, int64(defaultProfileInterval/time.Microsecond))
 	if parsed != nil && parsed.periodNs >= 1000 {
 		interval = parsed.periodNs / 1000
 	}

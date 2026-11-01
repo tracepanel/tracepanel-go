@@ -389,6 +389,69 @@ func TestRawSQLAndRows(t *testing.T) {
 	}
 }
 
+// Scan's rows, into whatever it scans to, with the app's logger logger.Discard or none at all.
+func TestScanCountsItsRowsWithAnyLogger(t *testing.T) {
+	loggers := map[string]logger.Interface{"discard": logger.Discard, "none": nil}
+	for name, appLogger := range loggers {
+		t.Run(name, func(t *testing.T) {
+			recorder := tracetest.Record(t)
+			db := openPlain(t, sqlite.Open(filepath.Join(t.TempDir(), "shop.db")), nil)
+			db.Config.Logger = appLogger
+			if err := db.Use(Plugin()); err != nil {
+				t.Fatal(err)
+			}
+
+			trace := command(t, recorder, func(ctx context.Context) error {
+				db := db.WithContext(ctx)
+				var average *float64
+				var count float64
+				var book struct{ Title string }
+				var titles []string
+				var missing *string
+				var none string
+				type title string
+				var named title
+				for _, scan := range []*gorm.DB{
+					db.Model(&Book{}).Select("AVG(id)").Where("author_id = ?", 1).Scan(&average),
+					db.Model(&Book{}).Select("COUNT(*)").Scan(&count),
+					db.Model(&Book{}).Select("title").Where("id = ?", 1).Scan(&book),
+					db.Model(&Book{}).Select("title").Scan(&titles),
+					db.Model(&Book{}).Select("title").Where("id > ?", 100).Scan(&missing),
+					db.Model(&Book{}).Select("title").Where("id > ?", 100).Scan(&none),
+					db.Model(&Book{}).Select("title").Where("id = ?", 2).Scan(&named),
+				} {
+					if scan.Error != nil {
+						return scan.Error
+					}
+				}
+				if average == nil || *average != 1.5 || count != 3 || book.Title != "Dune" || len(titles) != 3 ||
+					missing != nil || named != "Children of Dune" {
+					t.Errorf("scanned: %v %v %v %v %v %v", average, count, book, titles, missing, named)
+				}
+				return nil
+			})
+
+			got := []any{}
+			for _, span := range tracetest.Spans(trace, "sql") {
+				attrs := tracetest.Attrs(span)
+				got = append(got, []any{attrs["db.statement"], attrs["db.response.returned_rows"]})
+			}
+			want := []any{
+				[]any{"SELECT AVG(id) FROM `books` WHERE author_id = ?", 1},
+				[]any{"SELECT COUNT(*) FROM `books`", 1},
+				[]any{"SELECT `title` FROM `books` WHERE id = ?", 1},
+				[]any{"SELECT `title` FROM `books`", 3},
+				[]any{"SELECT `title` FROM `books` WHERE id > ?", 0},
+				[]any{"SELECT `title` FROM `books` WHERE id > ?", 0},
+				[]any{"SELECT `title` FROM `books` WHERE id = ?", 1},
+			}
+			if !tracetest.Equal(got, want) {
+				t.Fatalf("sql spans:\n got %v\nwant %v", got, want)
+			}
+		})
+	}
+}
+
 func TestOutsideATraceNothingIsRecorded(t *testing.T) {
 	recorder := tracetest.Record(t)
 	db := open(t, nil)
