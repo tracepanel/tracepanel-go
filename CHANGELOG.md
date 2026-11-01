@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.3 (2026-11-01)
+
+### Changed
+
+- Runs `tracepanel-agent` 0.10.3: waiting has one name and look in a
+  profile, and the framework and waiting rows sit below your functions.
+
 ## 0.10.2 (2026-11-01)
 
 ### Changed
