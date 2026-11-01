@@ -9,8 +9,9 @@
 //
 // The rows a query returned are recorded for Find, First, Pluck, Count and the rest, and for Scan (Raw(...).Scan,
 // Select(...).Scan), whose count GORM tells its logger once it has scanned them: the plugin wraps the logger
-// (gorm.Config.Logger) to read it. A Session with a Logger of its own (or Debug on it) keeps the wrapped one only
-// when it was set before db.Use. Not for Rows() and Row(): the app reads the rows itself, from a *sql.Rows (or
+// (gorm.Config.Logger, whichever it is: logger.Discard, the app's own, or none) to read it. A Session with a Logger
+// of its own (or Debug on it) keeps the wrapped one only when it was set before db.Use, and so does a logger
+// assigned to db.Logger after it. Not for Rows() and Row(): the app reads the rows itself, from a *sql.Rows (or
 // *sql.Row) that database/sql hands over and nothing can watch; tracepanel.Driver as the dialector's DriverName
 // counts them, as the driver hands each row over.
 //
@@ -123,10 +124,15 @@ func (p *plugin) Initialize(db *gorm.DB) error {
 	if db.Statement != nil {
 		db.Statement.ConnPool = db.ConnPool
 	}
-	// Scan tells its logger how many rows it scanned: the logger, wrapped, gives them to the statement's span.
-	if db.Config != nil && db.Config.Logger != nil {
-		if _, wrapped := db.Config.Logger.(*rowsLogger); !wrapped {
-			db.Config.Logger = &rowsLogger{Interface: db.Config.Logger}
+	// Scan tells its logger how many rows it scanned: the logger, wrapped, gives them to the statement's span. Any
+	// logger the app chose (logger.Discard, its own), and none: GORM's Scan calls one, so a nil one is Discard.
+	if db.Config != nil {
+		switch current := db.Config.Logger.(type) {
+		case *rowsLogger:
+		case nil:
+			db.Config.Logger = &rowsLogger{Interface: logger.Discard}
+		default:
+			db.Config.Logger = &rowsLogger{Interface: current}
 		}
 	}
 	return nil
@@ -158,8 +164,12 @@ func (p *plugin) beforeRows(db *gorm.DB) {
 	}
 }
 
-// scanned is the span of a Rows() query, whose rows Scan counts later; scannedKey is where its context carries it.
-type scanned struct{ span hook.Span }
+// scanned is the span of a Rows() query, whose rows Scan counts later, and its statement; scannedKey is where its
+// context carries it.
+type scanned struct {
+	span hook.Span
+	stmt *gorm.Statement
+}
 
 type scannedKey struct{}
 
@@ -193,7 +203,7 @@ func (p *plugin) after(operation string) func(*gorm.DB) {
 		span := hook.DoneSpan(stmt.Context, under, "sql", name, attrs, begun.at, failed)
 		if pending, ok := stmt.Context.Value(scannedKey{}).(*scanned); ok && span != nil {
 			if _, rows := stmt.Dest.(*sql.Rows); rows {
-				pending.span = span
+				pending.span, pending.stmt = span, stmt
 			}
 		}
 	}
@@ -215,11 +225,25 @@ func (l *rowsLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 	if pending, ok := ctx.Value(scannedKey{}).(*scanned); ok && pending.span != nil {
 		// A Rows() query GORM ran itself tells -1; Scan, once it scanned them, their number.
 		if sql, rows := fc(); rows >= 0 && sql != "" {
-			pending.span.Set("db.response.returned_rows", rows)
-			pending.span = nil
+			pending.span.Set("db.response.returned_rows", scannedRows(pending.stmt, rows))
+			pending.span, pending.stmt = nil, nil
 		}
 	}
 	l.Interface.Trace(ctx, begin, fc, err)
+}
+
+// scannedRows is the rows Scan scanned, by GORM's count: but for a destination GORM scans as one value without
+// counting it (a pointer to a pointer, `var avg *float64; Scan(&avg)`, a named type of a number or a string), which
+// it says is 0. Scan leaves the statement's destination the *sql.Rows of its query when there was no row, and puts
+// its own there once it scans one: it read one row then.
+func scannedRows(stmt *gorm.Statement, rows int64) int64 {
+	if rows != 0 || stmt == nil {
+		return rows
+	}
+	if _, none := stmt.Dest.(*sql.Rows); none || stmt.Dest == nil {
+		return 0
+	}
+	return 1
 }
 
 // ParamsFilter is the app's logger's, if it has one: GORM asks it for the parameters a logged statement shows.
