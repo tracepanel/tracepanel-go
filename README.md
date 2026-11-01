@@ -51,13 +51,13 @@ binary, run it through the SDK's command, which sets
 `TRACEPANEL_ENABLED=1` for it:
 
 ```bash
-go install github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.1
+go install github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.2
 tracepanel run ./shop
 ```
 
 `tracepanel run` exits with the app's exit code, and says on stderr how
 an app that failed ended (`tracepanel: ./shop exited with status 3`).
-`go run github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.1 run
+`go run github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.2 run
 ./shop` works without installing it, but `go run` exits 1 whatever the
 program's code, so that line is where the app's status is.
 
@@ -491,14 +491,14 @@ aren't kept.
 For an AI coding agent (Claude Code, Cursor, Codex), the same traces over
 MCP, from the project's directory, with the agent the SDK runs, through
 the `tracepanel` command (`go install
-github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.1`):
+github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.2`):
 
 ```bash
 claude mcp add --scope project tracepanel -- tracepanel mcp
 ```
 
 Without installing it, `go run
-github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.1 mcp` does the
+github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.10.2 mcp` does the
 same. The command runs the agent's console in the foreground
 (`tracepanel dev --port 8765`, and `tracepanel dev -- ./shop` with the
 app beside it, recording), a built app recording (`tracepanel run
