@@ -74,7 +74,7 @@ func (t *tracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.T
 	t.remember(conn)
 	switch control := transactionControl(data.SQL); control {
 	case "begin":
-		if span := t.begin(ctx, conn, "transaction", "transaction "+t.db.Namespace, t.attrs()); span != nil {
+		if span := t.begin(ctx, conn, "transaction", "transaction "+t.db.Alias, t.attrs()); span != nil {
 			t.txns.Store(conn, &openTx{span: span})
 		}
 		return context.WithValue(ctx, queryKey{}, &running{control: control})
@@ -147,14 +147,17 @@ func (t *tracer) endTx(conn *pgx.Conn, outcome string, failed bool) {
 func (t *tracer) attrs() map[string]any {
 	return map[string]any{
 		"db.system": t.db.System, "db.vendor": t.db.System, "db.client": "pgx", "db.alias": t.db.Alias,
-		"db.namespace": t.db.Namespace, "code.origin": nilIfEmpty(hook.Origin()),
+		"db.namespace": nilIfEmpty(t.db.Namespace), "code.origin": nilIfEmpty(hook.Origin()),
 	}
 }
 
 // remember lets the console run EXPLAIN on the database, through a database/sql pool of the first connection's
-// config: it connects only when the console asks.
+// config: it connects only when the console asks. The database's name is that config's, unless DBName gave one.
 func (t *tracer) remember(conn *pgx.Conn) {
 	t.explain.Do(func() {
+		if t.db.Namespace == "" {
+			t.db.Namespace = conn.Config().Database
+		}
 		hook.Explain(t.db, sql.OpenDB(stdlib.GetConnector(*conn.Config())))
 	})
 }
