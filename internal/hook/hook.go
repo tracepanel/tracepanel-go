@@ -107,6 +107,9 @@ var (
 	// System is a database's kind from its driver's or dialect's name, as OpenTelemetry names it ("postgres" is
 	// "postgresql"): "" when the name doesn't tell.
 	System func(name string) string
+	// ConfigName is the database a driver's or an ORM's config (GORM's dialector) is for, as its database field or its
+	// DSN names it: "" when it names none.
+	ConfigName func(system string, config any) string
 	// Recorded tells whether sqlDB's statements are recorded already: it was opened through tracepanel.Driver or
 	// WrapConnector.
 	Recorded func(sqlDB *sql.DB) bool

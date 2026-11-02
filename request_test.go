@@ -155,7 +155,7 @@ func TestARequestIsATraceOfItsSQLLogsAndCalls(t *testing.T) {
 	selectQuery := queries[0]
 	if !equalJSON(selectQuery.Attrs, attrMap{
 		"db.system": "other_sql", "db.vendor": "other_sql", "db.client": "database/sql", "db.alias": "default",
-		"db.namespace": "default", "db.statement": "SELECT id, title FROM books WHERE author_id = $1",
+		"db.namespace": nil, "db.statement": "SELECT id, title FROM books WHERE author_id = $1",
 		"db.fingerprint": "SELECT id, title FROM books WHERE author_id = $1", "db.params": []any{7},
 		"db.params_hash": selectQuery.Attrs["db.params_hash"], "db.many": false,
 		"code.origin": selectQuery.Attrs["code.origin"], "code.template": nil, "db.response.returned_rows": 3,

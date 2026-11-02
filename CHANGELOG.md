@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- A SQL span's database (`db.namespace`) is the database's name, read
+  from the DSN, the connector's config, the pgx connection or GORM's
+  dialector, not the alias "default". `DBName` still sets it.
+- A profile's `memory.allocated` says how Go counts it: a large
+  allocation as it is made, small ones only as the runtime's cached
+  span of memory fills, so a request of a few small allocations can
+  read 0. The end-to-end test that read it asks for a large one, and no
+  longer fails now and then.
+
 ### Changed
 
 - `EXPLAIN` follows the agent's rule: a `WITH … SELECT` is explained, a

@@ -84,9 +84,6 @@ func newDatabase(options []DBOption) *database {
 	for _, option := range options {
 		option(db)
 	}
-	if db.namespace == "" {
-		db.namespace = db.alias
-	}
 	return db
 }
 
@@ -98,6 +95,9 @@ func traced(connector driver.Connector, template *database) driver.Connector {
 	}
 	if db.system == "" {
 		db.system = "other_sql"
+	}
+	if db.namespace == "" {
+		db.namespace = configName(db.system, connector)
 	}
 	db.sql = sql.OpenDB(connector)
 	remember(&db)
@@ -136,6 +136,9 @@ func (d *tracedDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	if db.system == "" {
 		db.system = systemOf(d.name)
 	}
+	if db.namespace == "" {
+		db.namespace = dsnName(db.system, dsn)
+	}
 	return traced(connector, &db), nil
 }
 
@@ -155,7 +158,8 @@ func DBSystem(name string) DBOption {
 	}
 }
 
-// DBName is the database's name, shown with its queries (the alias otherwise).
+// DBName is the database's name, shown with its queries (db.namespace), when the DSN or the driver's config doesn't
+// tell it.
 func DBName(name string) DBOption { return func(db *database) { db.namespace = name } }
 
 // systemOf is a database's kind from its driver's name or package, as OpenTelemetry names it: "pgx" and lib/pq are
@@ -215,7 +219,7 @@ type database struct {
 func (db *database) attrs() attrMap {
 	return attrMap{
 		"db.system": db.system, "db.vendor": db.system, "db.client": "database/sql", "db.alias": db.alias,
-		"db.namespace": db.namespace,
+		"db.namespace": nilIfEmpty(db.namespace),
 	}
 }
 
@@ -345,7 +349,7 @@ func (c *tracedConn) BeginTx(ctx context.Context, options driver.TxOptions) (dri
 	if s := scopeOf(ctx); s != nil {
 		attrs := c.db.attrs()
 		attrs["code.origin"] = nilIfEmpty(origin())
-		span := s.rec.begin(s.parent(), "transaction", "transaction "+c.db.namespace, attrs)
+		span := s.rec.begin(s.parent(), "transaction", "transaction "+c.db.alias, attrs)
 		c.mu.Lock()
 		c.txn = &openTx{rec: s.rec, span: span}
 		c.mu.Unlock()

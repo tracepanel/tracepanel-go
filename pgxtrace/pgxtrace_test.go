@@ -122,7 +122,7 @@ func TestStatementsAreSQLSpans(t *testing.T) {
 	delete(attrs, "code.origin")
 	want := tracetest.Doc{
 		"db.system": "postgresql", "db.vendor": "postgresql", "db.client": "pgx", "db.alias": "default",
-		"db.namespace": "default", "db.statement": "SELECT id FROM books WHERE author_id = $1",
+		"db.namespace": "shop", "db.statement": "SELECT id FROM books WHERE author_id = $1",
 		"db.fingerprint": "SELECT id FROM books WHERE author_id = $1", "db.params": []any{float64(7)},
 		"db.params_hash": attrs["db.params_hash"], "db.many": false, "code.template": nil,
 		"db.response.returned_rows": float64(2),

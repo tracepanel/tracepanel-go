@@ -97,6 +97,10 @@ func (p *plugin) Initialize(db *gorm.DB) error {
 	if p.db.System == "" {
 		p.db.System = "other_sql"
 	}
+	if p.db.Namespace == "" && db.Dialector != nil {
+		// The database its dialector's DSN or config names.
+		p.db.Namespace = hook.ConfigName(p.db.System, db.Dialector)
+	}
 	if err == nil {
 		hook.Explain(p.db, sqlDB)
 	} else {
@@ -295,9 +299,9 @@ func (c *pool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool,
 	db := c.plugin.db
 	attrs := map[string]any{
 		"db.system": db.System, "db.vendor": db.System, "db.client": "gorm", "db.alias": db.Alias,
-		"db.namespace": db.Namespace, "code.origin": nilIfEmpty(hook.Origin()),
+		"db.namespace": nilIfEmpty(db.Namespace), "code.origin": nilIfEmpty(hook.Origin()),
 	}
-	span := hook.Begin(ctx, "transaction", "transaction "+db.Namespace, attrs)
+	span := hook.Begin(ctx, "transaction", "transaction "+db.Alias, attrs)
 	if span == nil {
 		return begun, nil
 	}

@@ -17,8 +17,10 @@ import (
 // allocations are in there too. Only for a trace that asks for it ("memory" in X-Tracepanel-Profile or the panel's
 // cookie, or TRACEPANEL_PROFILE_MEMORY=1 for every profiled one):
 //
-//   - allocated: the bytes the heap allocated while the trace ran (/gc/heap/allocs:bytes), freed or not. Go counts
-//     them as its allocator hands out spans of memory, so a few kilobytes either way.
+//   - allocated: the bytes the heap allocated while the trace ran (/gc/heap/allocs:bytes), freed or not. Go counts a
+//     large allocation (over 32 KB) as it is made, and small ones only as a processor's cached span of memory fills
+//     and is swapped (or at a collection): a few kilobytes either way, and a trace of a few small allocations can
+//     read 0.
 //   - peak: the heap's highest level while the trace ran, above its level at the start
 //     (/memory/classes/heap/objects:bytes, read every 10 ms and at the end). Garbage counts until it is collected.
 //   - net: the heap's level at the end less at the start, garbage counted until collected: negative where a

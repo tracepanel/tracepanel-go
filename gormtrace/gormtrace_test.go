@@ -101,7 +101,7 @@ func TestAQueryIsASQLSpan(t *testing.T) {
 	delete(attrs, "code.origin")
 	want := tracetest.Doc{
 		"db.system": "sqlite", "db.vendor": "sqlite", "db.client": "gorm", "db.alias": "default",
-		"db.namespace": "default", "db.statement": "SELECT * FROM `books` WHERE author_id = ? ORDER BY id",
+		"db.namespace": "shop.db", "db.statement": "SELECT * FROM `books` WHERE author_id = ? ORDER BY id",
 		"db.fingerprint": "SELECT * FROM `books` WHERE author_id = ? ORDER BY id", "db.params": []any{1},
 		"db.params_hash": attrs["db.params_hash"], "db.many": false, "code.template": nil,
 		"db.response.returned_rows": 2,

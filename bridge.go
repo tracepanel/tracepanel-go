@@ -78,6 +78,7 @@ func init() {
 		return name, attrs
 	}
 	hook.System = systemOf
+	hook.ConfigName = configName
 	hook.Recorded = recorded
 	hook.Explain = func(db hook.DB, sqlDB *sql.DB) {
 		remember(&database{alias: db.Alias, system: db.System, namespace: db.Namespace, sql: sqlDB})

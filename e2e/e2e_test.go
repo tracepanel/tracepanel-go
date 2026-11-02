@@ -159,15 +159,24 @@ type trace struct {
 	} `json:"profile"`
 }
 
+// reportFigures is how many figures a report adds up: 256 KB of them.
+const reportFigures = 32 << 10
+
 // report is a request that keeps a CPU busy: what a profile shows.
 func report(w http.ResponseWriter, r *http.Request) {
 	var order map[string]any
 	_ = json.NewDecoder(r.Body).Decode(&order)
-	sum := 0.0
+	// Its figures, 256 KB on the heap: a large allocation, which Go counts as it is made (a small one only when its
+	// processor's span of memory fills, so a request of a few small ones may show none).
+	figures := make([]float64, reportFigures)
 	for deadline := time.Now().Add(300 * time.Millisecond); time.Now().Before(deadline); {
-		for i := range 10_000 {
-			sum += float64(i) * 1.0001
+		for i := range figures {
+			figures[i] += float64(i) * 1.0001
 		}
+	}
+	sum := 0.0
+	for _, figure := range figures {
+		sum += figure
 	}
 	fmt.Fprintf(w, `{"sum": %f}`, sum)
 }
@@ -513,8 +522,8 @@ func profiledReport(t *testing.T, server *httptest.Server, console string) {
 	// Its profile: where its CPU time went, the app's function in it, a millisecond a count (on macOS an estimate).
 	profile := found.Profile
 	if profile == nil || profile.IntervalUs != 1000 || profile.Samples == 0 || len(profile.Stacks) == 0 ||
-		profile.Memory == nil || profile.Memory.Allocated == 0 || profile.GC == nil {
-		t.Fatalf("profile %+v", profile)
+		profile.Memory == nil || profile.Memory.Allocated < reportFigures*8 || profile.GC == nil {
+		t.Fatalf("profile %+v, its memory %+v", profile, profile.Memory)
 	}
 	inApp := false
 	for _, frame := range profile.Frames {
