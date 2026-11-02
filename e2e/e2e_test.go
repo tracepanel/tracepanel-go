@@ -119,6 +119,7 @@ func get(t *testing.T, console, path string, into any) bool {
 }
 
 type span struct {
+	ID    string         `json:"id"`
 	Kind  string         `json:"kind"`
 	Name  string         `json:"name"`
 	Attrs map[string]any `json:"attrs"`
@@ -264,6 +265,7 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 	mux.HandleFunc("GET /authors", authors(db))
 	mux.HandleFunc("GET /gorm/authors", gormAuthors(orm))
 	mux.HandleFunc("POST /report", report)
+	mux.HandleFunc("GET /recent", recent(db))
 	server := httptest.NewServer(tracepanel.WrapHandler(mux))
 	defer server.Close()
 
@@ -342,6 +344,7 @@ func TestAnNPlusOneReachesTheAgentAsATraceWithItsIssue(t *testing.T) {
 		t.Fatalf("api/app %+v", app)
 	}
 
+	explainedCTE(t, server, console)
 	profiledReport(t, server, console)
 	gormNPlusOne(t, server, console, app.Agent)
 }
@@ -522,5 +525,47 @@ func profiledReport(t *testing.T, server *httptest.Server, console string) {
 	}
 	if capabilities["profile"] != true || capabilities["request"] != true || capabilities["profile_memory"] != true {
 		t.Fatalf("capabilities %v", capabilities)
+	}
+}
+
+// recent is a page whose query is a CTE: WITH, then the SELECT that reads it.
+func recent(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var count int
+		query := "WITH recent AS (SELECT id, title FROM books WHERE author_id = 2) SELECT COUNT(*) FROM recent"
+		if err := db.QueryRowContext(r.Context(), query).Scan(&count); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "%d recent books", count)
+	}
+}
+
+// explainedCTE: the console's EXPLAIN of a WITH … SELECT runs on the app's SQLite database, through the agent.
+func explainedCTE(t *testing.T, server *httptest.Server, console string) {
+	t.Helper()
+	response, err := http.Get(server.URL + "/recent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	tracepanel.Flush(5 * time.Second)
+	stored := stored(t, console, response.Header.Get("Tracepanel-Id"))
+	query := ""
+	for _, s := range stored.Spans {
+		if s.Kind == "sql" {
+			query = s.ID
+		}
+	}
+	var plan struct {
+		Vendor string `json:"vendor"`
+		Lines  []struct {
+			Text string `json:"text"`
+		} `json:"lines"`
+	}
+	get(t, console, "explain?trace="+stored.ID+"&span="+query, &plan)
+
+	if plan.Vendor != "sqlite" || len(plan.Lines) == 0 || !strings.Contains(plan.Lines[0].Text, "books") {
+		t.Fatalf("plan %+v", plan)
 	}
 }
