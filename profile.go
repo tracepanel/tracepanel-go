@@ -5,7 +5,9 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
+	"math"
 	"runtime/pprof"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,8 +22,9 @@ import (
 //
 // The profiler is the process's, sampling every goroutine on a CPU every millisecond of CPU time (Go's own rate is
 // every 10 ms: profile_rate.go), or Config.ProfileInterval, TRACEPANEL_PROFILE_INTERVAL_MS. On macOS (and the other
-// platforms whose profiler runs off one process-wide timer) the kernel delivers fewer samples than that: a profile
-// says how much CPU time its samples stand for, the process's CPU time over them (cputime_setitimer.go). A profiled trace's goroutine carries a pprof label naming the trace (tracepanel_trace), which the
+// platforms whose profiler runs off one process-wide timer) the kernel delivers fewer samples than that, and unevenly:
+// a profile's CPU time there is an estimate, weighed against the process's CPU time (weigh, cputime_setitimer.go),
+// and says so (estimated_from). A profiled trace's goroutine carries a pprof label naming the trace (tracepanel_trace), which the
 // goroutines it starts inherit; a sample is the trace's when it carries its label. That holds with any number of
 // requests at once: no sample of another request is taken for this one. The profile is the CPU's time only: a
 // goroutine waiting (for the database, a lock, a sleep) isn't sampled.
@@ -51,11 +54,13 @@ const (
 )
 
 type profileDoc struct {
-	IntervalUs int64          `json:"interval_us"`
-	Samples    int64          `json:"samples"`
-	Dropped    int64          `json:"dropped"`
-	Frames     []profileFrame `json:"frames"`
-	Stacks     []profileStack `json:"stacks"`
+	IntervalUs int64 `json:"interval_us"`
+	Samples    int64 `json:"samples"`
+	Dropped    int64 `json:"dropped"`
+	// Where the counts are an estimate of CPU time (macOS: weigh), not samples taken: how many samples were taken.
+	EstimatedFrom int64          `json:"estimated_from,omitempty"`
+	Frames        []profileFrame `json:"frames"`
+	Stacks        []profileStack `json:"stacks"`
 	// What the heap did while the trace ran, when asked for, and the collector's runs (memory.go).
 	Memory *profileMemory `json:"memory,omitempty"`
 	GC     *profileGC     `json:"gc,omitempty"`
@@ -72,6 +77,8 @@ type profileFrame struct {
 type profileStack struct {
 	Frames []int `json:"frames"`
 	Count  int64 `json:"count"`
+	// The CPU time its samples stand for, in the profile's periods, where they were weighed (weigh).
+	weight float64
 }
 
 // traceProfile is a profiled trace's samples so far: its stacks (as keys into frames) and how often each was seen.
@@ -82,6 +89,8 @@ type traceProfile struct {
 	index   map[cpuFrame]int
 	samples int64
 	dropped int64
+	// Its samples were weighed (weigh): its counts are the CPU time they stand for, not the samples taken.
+	estimated bool
 	// How often the profiler meant to sample, for a profile whose samples don't say.
 	intervalUs int64
 	// The profiler couldn't run while it did (another CPU profile had it).
@@ -297,7 +306,7 @@ func (p *profiler) cut() {
 		p.stopCPU()
 		parsed, _ = parseCPUProfile(out.Bytes(), profileLabel)
 		if parsed != nil && used > 0 {
-			parsed.periodNs = sampledPeriod(parsed, used)
+			weigh(parsed, used)
 		}
 	}
 
@@ -358,18 +367,66 @@ func (p *profiler) share(parsed *cpuProfile) {
 	}
 }
 
-// sampledPeriod is how much CPU time a sample of the profile stands for, given the process's CPU time while it ran:
-// that time over all its samples (every goroutine's, lost ones too), when the kernel delivered fewer than the rate
-// asked for; the rate's period otherwise.
-func sampledPeriod(parsed *cpuProfile, used time.Duration) int64 {
-	var samples int64
+// weigh sets the CPU time each sample of the profile stands for, given the process's CPU time while it ran, where
+// the kernel delivers the profiler's signals unevenly. That is macOS (and the BSDs): Go's profiler runs off one
+// process-wide timer there (setitimer), and the kernel checks it only as a thread enters or leaves the kernel, posting
+// the signal to the thread that checks when it is due. A thread in and out of the kernel (a query's socket, a file)
+// checks all the time and gets about one signal per period of its CPU time; a thread computing checks only when an
+// interrupt stops it, every few milliseconds, and gets one signal for all the periods due since. Taken as they are,
+// the samples give the code that waits on the kernel most of the CPU time, and a loop that computes a fraction of its
+// own. So a sample taken at the kernel's door (its innermost frame a system call: kernelEntry) stands for one period,
+// and the rest of the process's CPU time is shared among the others, at least a period each. It is an estimate (the
+// samples say nothing of which thread took them), and the profile says so: estimated_from.
+func weigh(parsed *cpuProfile, used time.Duration) {
+	if parsed.periodNs <= 0 {
+		return
+	}
+	var atEntry, others int64
 	for _, sample := range parsed.samples {
-		samples += sample.count
+		if kernelEntry(sample) {
+			atEntry += sample.count
+		} else {
+			others += sample.count
+		}
 	}
-	if samples == 0 {
-		return parsed.periodNs
+	each := 1.0
+	if others > 0 {
+		each = max(1, (float64(used)/float64(parsed.periodNs)-float64(atEntry))/float64(others))
 	}
-	return max(parsed.periodNs, int64(used)/samples)
+	for i := range parsed.samples {
+		sample := &parsed.samples[i]
+		sample.weight = float64(sample.count)
+		if !kernelEntry(*sample) {
+			sample.weight *= each
+		}
+	}
+}
+
+// kernelCalls are the runtime's calls into the kernel through libc (macOS): waiting for the network poller, a lock, a
+// sleep, or reading and writing.
+var kernelCalls = map[string]bool{
+	"runtime.kevent": true, "runtime.usleep": true, "runtime.usleep_no_g": true, "runtime.nanosleep": true,
+	"runtime.pthread_cond_wait": true, "runtime.pthread_cond_timedwait_relative_np": true,
+	"runtime.pthread_cond_signal": true, "runtime.pthread_kill": true, "runtime.osyield": true,
+	"runtime.read": true, "runtime.write1": true, "runtime.open": true, "runtime.closefd": true,
+	"runtime.madvise": true, "runtime.mmap": true, "runtime.munmap": true, "runtime.sigprocmask": true,
+	"runtime.raiseproc": true, "runtime.libcCall": true,
+}
+
+// kernelEntry: a sample taken as its thread entered or left the kernel, its innermost frame a system call.
+func kernelEntry(sample cpuSample) bool {
+	if len(sample.stack) == 0 {
+		return false
+	}
+	function := sample.stack[0].function
+	if kernelCalls[function] {
+		return true
+	}
+	pkg, name, _ := strings.Cut(function, ".")
+	if at := strings.LastIndex(function, "/"); at >= 0 {
+		pkg, name, _ = strings.Cut(function[at+1:], ".")
+	}
+	return (pkg == "syscall" || pkg == "unix") && strings.Contains(strings.ToLower(name), "syscall")
 }
 
 func lostSample(function string) bool {
@@ -427,6 +484,10 @@ func (tp *traceProfile) add(sample cpuSample) {
 	}
 	stack.Count += sample.count
 	tp.samples += sample.count
+	if sample.weight > 0 {
+		stack.weight += sample.weight
+		tp.estimated = true
+	}
 }
 
 func (tp *traceProfile) frameIndex(frame cpuFrame) int {
@@ -462,15 +523,25 @@ func (tp *traceProfile) document(parsed *cpuProfile) *profileDoc {
 	for _, stack := range tp.stacks {
 		stacks = append(stacks, stack)
 	}
+	samples, estimatedFrom := tp.samples, int64(0)
+	if tp.estimated {
+		samples, estimatedFrom = estimate(stacks), tp.samples
+	}
 	sort.SliceStable(stacks, func(i, j int) bool {
 		if stacks[i].Count != stacks[j].Count {
 			return stacks[i].Count > stacks[j].Count
 		}
 		return stackKey(stacks[i].Frames) < stackKey(stacks[j].Frames)
 	})
-	doc := &profileDoc{IntervalUs: interval, Samples: tp.samples, Dropped: tp.dropped, Frames: []profileFrame{}, Stacks: []profileStack{}}
+	doc := &profileDoc{
+		IntervalUs: interval, Samples: samples, Dropped: tp.dropped, EstimatedFrom: estimatedFrom,
+		Frames: []profileFrame{}, Stacks: []profileStack{},
+	}
 	renumber := map[int]int{}
 	for _, stack := range stacks {
+		if stack.Count == 0 {
+			continue
+		}
 		frames := make([]int, len(stack.Frames))
 		for i, frame := range stack.Frames {
 			to, ok := renumber[frame]
@@ -484,6 +555,33 @@ func (tp *traceProfile) document(parsed *cpuProfile) *profileDoc {
 		doc.Stacks = append(doc.Stacks, profileStack{Frames: frames, Count: stack.Count})
 	}
 	return doc
+}
+
+// estimate turns weighed stacks' CPU time into whole periods, each stack's count rounded so that they add up to the
+// total rounded (the largest remainders round up), and says the total.
+func estimate(stacks []*profileStack) int64 {
+	var sum float64
+	for _, stack := range stacks {
+		sum += stack.weight
+	}
+	total := int64(math.Round(sum))
+	var counted int64
+	for _, stack := range stacks {
+		stack.Count = int64(math.Floor(stack.weight))
+		counted += stack.Count
+	}
+	byRemainder := slices.Clone(stacks)
+	sort.SliceStable(byRemainder, func(i, j int) bool {
+		return byRemainder[i].weight-math.Floor(byRemainder[i].weight) > byRemainder[j].weight-math.Floor(byRemainder[j].weight)
+	})
+	for _, stack := range byRemainder {
+		if counted >= total {
+			break
+		}
+		stack.Count++
+		counted++
+	}
+	return total
 }
 
 // ownFrame: Tracepanel's own code (the core and its integrations), but for its tests, which play the app.
