@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- A SQL span's database (`db.namespace`) is the database's name, read
+  from the DSN, the connector's config, the pgx connection or GORM's
+  dialector, not the alias "default". `DBName` still sets it.
+
 ### Changed
 
 - `EXPLAIN` follows the agent's rule: a `WITH … SELECT` is explained, a
