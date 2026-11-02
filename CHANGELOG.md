@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `EXPLAIN` follows the agent's rule: a `WITH … SELECT` is explained, a
+  query that changes data (a `DELETE` inside `WITH`, `SELECT … INTO`) or
+  is more than one statement is refused with the reason, and one that
+  locks rows (`FOR UPDATE`) is explained but not analyzed. The app
+  checks what the agent asks before it runs it.
+
 ## 0.11.0 (2026-11-02)
 
 ### Fixed

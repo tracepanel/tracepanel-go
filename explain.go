@@ -3,19 +3,41 @@ package tracepanel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 )
 
 // EXPLAIN for the console: the agent writes the statement (EXPLAIN, EXPLAIN ANALYZE) and sends it down the connection
 // the traces go up; the app runs it on the database the query came from, by its alias, and answers with the rows,
-// which the agent reads as a plan. Whatever EXPLAIN ANALYZE does is rolled back.
+// which the agent reads as a plan. Whatever EXPLAIN ANALYZE does is rolled back. Only an EXPLAIN of a statement that
+// reads (explainable.go) is run.
 
 type explainRequest struct {
 	SQL    string `json:"sql"`
 	Params []any  `json:"params"`
 	Vendor string `json:"vendor"`
 	Alias  string `json:"alias"`
+	// EXPLAIN ANALYZE: it runs the statement.
+	Analyze bool `json:"analyze"`
+}
+
+// explainPrefix is what the agent writes before the statement: EXPLAIN, SQLite's QUERY PLAN, or ANALYZE.
+var explainPrefix = regexp.MustCompile(`(?i)^\s*EXPLAIN\s+(QUERY\s+PLAN\s+|\(ANALYZE,\s*BUFFERS\)\s+|ANALYZE\s+)?`)
+
+// explainable refuses what isn't the agent's EXPLAIN of a statement that reads.
+func explainable(request explainRequest) error {
+	prefix := explainPrefix.FindStringSubmatch(request.SQL)
+	if prefix == nil {
+		return errors.New(notSelect)
+	}
+	analyze := request.Analyze || strings.Contains(strings.ToUpper(prefix[1]), "ANALYZE")
+	if why := explainRefusal(request.SQL[len(prefix[0]):], analyze); why != "" {
+		return errors.New(why)
+	}
+	return nil
 }
 
 type explainAnswer struct {
@@ -41,6 +63,9 @@ func number(value any) any {
 }
 
 func explain(request explainRequest) (*explainAnswer, error) {
+	if err := explainable(request); err != nil {
+		return nil, err
+	}
 	alias := request.Alias
 	if alias == "" {
 		alias = "default"

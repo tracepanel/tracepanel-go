@@ -210,8 +210,11 @@ wraps it for `sql.OpenDB`:
 db := sql.OpenDB(tracepanel.WrapConnector(stdlib.GetConnector(*config)))
 ```
 
-The console runs `EXPLAIN` of a recorded `SELECT` on the database it came
-from. With a second database, name it:
+The console runs `EXPLAIN` of a recorded `SELECT`, or of a `WITH` that
+ends in one, on the database it came from. A query that changes data (a
+`DELETE` inside `WITH`, `SELECT … INTO`) is not explained, and
+`EXPLAIN ANALYZE` runs in a transaction that is rolled back. With a
+second database, name it:
 
 ```go
 replicaDriver := tracepanel.Driver("pgx", tracepanel.DBAlias("replica"))
