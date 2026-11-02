@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/redis/go-redis/v9 v9.23.0
-	github.com/tracepanel/tracepanel-go v0.11.0
+	github.com/tracepanel/tracepanel-go v0.12.0
 )
 
 require (
