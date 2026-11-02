@@ -8,10 +8,9 @@ import (
 )
 
 // processCPUTime is the CPU time the process has used (user and system), for a profiler whose samples fall short of
-// its rate. Go's profiler runs off one process-wide timer here (setitimer), and the kernel delivers its signals as its
-// own clock ticks allow: on macOS a fifth to a third of 1,000 a second, however high the rate is set (Linux has a timer
-// per thread, and every one). So a sample stands for more CPU time than the rate says: the profile's CPU time over
-// its samples.
+// its rate and fall unevenly. Go's profiler runs off one process-wide timer here (setitimer), and the kernel posts its
+// signals only as a thread enters or leaves it (Linux has a timer per thread, and takes every sample). So the samples
+// are weighed against the process's CPU time (weigh).
 var processCPUTime = func() time.Duration {
 	var usage syscall.Rusage
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {

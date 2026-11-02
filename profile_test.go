@@ -84,8 +84,7 @@ func TestAProfiledRequestHasItsOwnSamplesOnly(t *testing.T) {
 	}
 	profile := report.Profile
 	// Samples are CPU time: fewer when the tests' other packages share the CPUs (and macOS delivers fewer anyway).
-	// One every millisecond, but where the kernel delivers fewer (macOS): there a sample stands for more.
-	if profile == nil || profile.IntervalUs < 1000 || processCPUTime == nil && profile.IntervalUs != 1000 || profile.Samples < 2 || profile.Dropped != 0 {
+	if profile == nil || profile.IntervalUs != 1000 || profile.Samples < 2 || profile.Dropped != 0 {
 		t.Fatalf("profile: %+v", profile)
 	}
 	named := functions(profile)

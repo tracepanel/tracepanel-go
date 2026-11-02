@@ -17,6 +17,8 @@ type cpuSample struct {
 	stack []cpuFrame
 	count int64
 	trace string
+	// The CPU time it stands for, in periods, where the profile's samples were weighed (weigh); 0 for its count.
+	weight float64
 }
 
 // cpuFrame is a function in a stack, where it was running (an inlined call is a frame of its own).

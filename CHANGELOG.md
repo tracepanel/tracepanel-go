@@ -4,12 +4,16 @@
 
 ### Fixed
 
-- On macOS a profile's CPU time is right: the kernel delivers only a
-  fifth to a third of the profiler's signals to code that stays out of
-  the kernel, so a 60 ms CPU-bound handler had some 17 samples at "one
-  every 1 ms" and the rest of its time showed as waiting. A profile now
-  says what its samples stand for, the process's CPU time over them
-  ("one every 3.5 ms"). Linux takes every sample, one a millisecond.
+- On macOS a profile's CPU time goes to the code that used it. The
+  kernel there hands the profiler's signals mostly to a thread entering
+  it (a query's socket), and one signal for several milliseconds to a
+  thread that computes, so a CPU-bound loop beside queries got about
+  half its time and the code that queried most of the rest. A sample
+  taken at a system call now stands for one millisecond, and the
+  process's other CPU time is shared among the other samples. It is an
+  estimate, and the profile says so (`estimated_from`: the samples
+  taken); the console shows it as one. Linux takes every sample, one a
+  millisecond, and needs none.
 
 ## 0.10.3 (2026-11-01)
 
