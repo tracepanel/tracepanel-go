@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/labstack/echo/v4 v4.16.3
-	github.com/tracepanel/tracepanel-go v0.13.0
+	github.com/tracepanel/tracepanel-go v0.13.1
 )
 
 require (
