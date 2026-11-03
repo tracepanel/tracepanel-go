@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/rs/zerolog v1.35.1
-	github.com/tracepanel/tracepanel-go v0.12.0
+	github.com/tracepanel/tracepanel-go v0.13.0
 )
 
 require (
