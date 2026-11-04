@@ -50,7 +50,8 @@ jobs:
     name: Release on GitHub and the module proxy
     needs: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Two waits for the module proxy of up to 10 minutes each.
+    timeout-minutes: 40
     permissions:
       contents: write
     steps:
@@ -84,9 +85,27 @@ jobs:
         run: |
           version=${GITHUB_REF_NAME#v}
           awk -v head="## $version " 'index($0, head) == 1 {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          # A re-run after a later step failed finds the release made.
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "The release $GITHUB_REF_NAME is there already"
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          fi
+      # Right after a push the proxy may not see the tag yet and answer 404 (and keep that miss a while): it is asked
+      # again, waiting longer each time, for up to 10 minutes.
       - name: The module proxy fetches it
-        run: curl --fail --silent --show-error "https://proxy.golang.org/github.com/tracepanel/tracepanel-go/@v/$GITHUB_REF_NAME.info"
+        run: |
+          url="https://proxy.golang.org/github.com/tracepanel/tracepanel-go/@v/$GITHUB_REF_NAME.info"
+          deadline=$((SECONDS + 600)) delay=10
+          until curl --fail --silent --show-error "$url"; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::the module proxy has no $GITHUB_REF_NAME after 10 minutes"
+              exit 1
+            fi
+            echo "The module proxy has no $GITHUB_REF_NAME yet, asking again in ${delay}s"
+            sleep "$delay"
+            delay=$((delay * 2 > 120 ? 120 : delay * 2))
+          done
       # The `replace` of the core to the checkout is for this repository only (Go ignores a dependency's replace), so
       # each integration is built as an app gets it: with the core from the proxy.
       - name: Each integration builds against the released core
@@ -98,13 +117,42 @@ jobs:
             copy=$(mktemp -d) && cp -R "$module/." "$copy"
             (cd "$copy" && go mod edit -dropreplace=github.com/tracepanel/tracepanel-go && go build ./... && go vet ./...) || exit 1
           done
+      # All the tags are pushed at once, then the proxy is asked for each, as the core above. A tag on the remote
+      # already (a re-run after a failure) is kept if it is of this commit, so a re-run tags only the rest.
       - name: The integrations' tags, and the module proxy fetches them
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tags=() new=()
           for module in $(sed -n 's/^MODULES := //p' Makefile); do
             [ "$module" = . ] && continue
-            git tag "$module/$GITHUB_REF_NAME" "$GITHUB_SHA"
-            git push origin "$module/$GITHUB_REF_NAME"
-            curl --fail --silent --show-error "https://proxy.golang.org/github.com/tracepanel/tracepanel-go/$module/@v/$GITHUB_REF_NAME.info"
+            tag="$module/$GITHUB_REF_NAME"
+            tags+=("$tag")
+            remote=$(git ls-remote origin "refs/tags/$tag" | cut -f1)
+            if [ -z "$remote" ]; then
+              git tag "$tag" "$GITHUB_SHA"
+              new+=("$tag")
+            elif [ "$remote" = "$GITHUB_SHA" ]; then
+              echo "$tag is on the remote already"
+            else
+              echo "::error::$tag is on the remote already, of $remote, not $GITHUB_SHA"
+              exit 1
+            fi
+          done
+          if [ "${#new[@]}" -gt 0 ]; then
+            git push origin "${new[@]}"
+            sleep 30
+          fi
+          deadline=$((SECONDS + 600))
+          for tag in "${tags[@]}"; do
+            module=${tag%/*} delay=10
+            until curl --fail --silent --show-error "https://proxy.golang.org/github.com/tracepanel/tracepanel-go/$module/@v/$GITHUB_REF_NAME.info"; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "::error::the module proxy has no $tag after 10 minutes"
+                exit 1
+              fi
+              echo "The module proxy has no $tag yet, asking again in ${delay}s"
+              sleep "$delay"
+              delay=$((delay * 2 > 120 ? 120 : delay * 2))
+            done
           done
