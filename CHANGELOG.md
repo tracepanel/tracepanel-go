@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A release tags every integration even when the Go module proxy does
+  not see a tag at once: all the integrations' tags are pushed together,
+  then the proxy is asked for each (and for the core) again, waiting
+  longer each time, for up to 10 minutes. Re-running a release that
+  failed half-way tags only the integrations not tagged yet.
+
 ## 0.13.1 (2026-11-03)
 
 ### Changed
