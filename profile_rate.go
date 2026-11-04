@@ -52,7 +52,8 @@ func startCPUProfile(out io.Writer, hz int) error {
 	return err
 }
 
-// quietly runs f with the process's stderr a pipe, and writes what went there to stderr after it, but for the
+// quietly runs f with the process's stderr a pipe, and writes what went there back to the process's stderr after it
+// (its file descriptor 2, not os.Stderr, which an app or `go test -json` may have pointed elsewhere), but for the
 // runtime's warning: false, f not run, when stderr can't be swapped.
 func quietly(f func()) bool {
 	r, w, err := os.Pipe()
@@ -75,7 +76,7 @@ func quietly(f func()) bool {
 	restore()
 	_ = w.Close()
 	if rest := withoutRateWarning(<-read); len(rest) > 0 {
-		_, _ = os.Stderr.Write(rest)
+		writeStderr(rest)
 	}
 	return true
 }

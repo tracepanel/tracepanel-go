@@ -9,3 +9,6 @@ import (
 
 // swapStderr can't: the profile runs at Go's rate.
 func swapStderr(*os.File) (func(), error) { return nil, errors.ErrUnsupported }
+
+// writeStderr writes b to stderr.
+func writeStderr(b []byte) { _, _ = os.Stderr.Write(b) }
