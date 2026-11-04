@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- What the app wrote to stderr while the profiler started at its rate
+  goes back to the process's stderr (file descriptor 2), not to
+  `os.Stderr`, which `go test -json` or an app may point elsewhere.
 - A release tags every integration even when the Go module proxy does
   not see a tag at once: all the integrations' tags are pushed together,
   then the proxy is asked for each (and for the core) again, waiting

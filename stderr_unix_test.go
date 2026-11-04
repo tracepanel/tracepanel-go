@@ -41,18 +41,31 @@ func stderrOf(t *testing.T, f func()) string {
 }
 
 func TestQuietlyKeepsWhatElseWentToStderr(t *testing.T) {
+	// os.Stderr isn't always the process's stderr: `go test -json` points it at stdout, and an app may too.
+	elsewhere, err := os.Create(filepath.Join(t.TempDir(), "elsewhere"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer elsewhere.Close()
+	stderr := os.Stderr
+	os.Stderr = elsewhere
+	defer func() { os.Stderr = stderr }()
 	ran := false
 
 	got := stderrOf(t, func() {
 		ran = quietly(func() {
 			// The runtime's own print, as runtime.SetCPUProfileRate writes its warning.
 			print(cpuRateWarning)
-			_, _ = os.Stderr.WriteString("the app's line\n")
+			_, _ = syscall.Write(2, []byte("the app's line\n"))
 		})
 	})
 
-	if !ran || got != "the app's line\n" {
-		t.Fatalf("ran %v, stderr %q", ran, got)
+	wentElsewhere, err := os.ReadFile(elsewhere.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ran || got != "the app's line\n" || len(wentElsewhere) > 0 {
+		t.Fatalf("ran %v, stderr %q, os.Stderr %q", ran, got, wentElsewhere)
 	}
 }
 

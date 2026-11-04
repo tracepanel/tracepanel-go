@@ -28,3 +28,17 @@ func swapStderr(w *os.File) (restore func(), err error) {
 		syscall.ForkLock.Unlock()
 	}, nil
 }
+
+// writeStderr writes b to the process's stderr: its file descriptor 2, whatever os.Stderr is.
+func writeStderr(b []byte) {
+	for len(b) > 0 {
+		n, err := syscall.Write(2, b)
+		if err == syscall.EINTR {
+			continue
+		}
+		if err != nil || n <= 0 {
+			return
+		}
+		b = b[n:]
+	}
+}
