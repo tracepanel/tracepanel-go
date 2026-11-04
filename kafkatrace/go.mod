@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/segmentio/kafka-go v0.4.51
-	github.com/tracepanel/tracepanel-go v0.13.1
+	github.com/tracepanel/tracepanel-go v0.14.0
 )
 
 require (
