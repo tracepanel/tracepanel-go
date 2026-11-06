@@ -12,6 +12,10 @@ dependencies: the integrations with gin, Echo, pgx, GORM, go-redis, zap,
 zerolog, gRPC and Kafka are modules of their own, and you get only those you
 use.
 
+[![A 40-second demo of a gin store: Swagger UI's Execute on an endpoint, and the panel docked under it with the request's call tree, an N+1 with its query plan and the Go line it runs from, a dump, the CPU profile, a task, and the same call after the fix](https://raw.githubusercontent.com/tracepanel/tracepanel-go/main/assets/demo-video.jpg)](https://tracepanel.dev/video/demo-go.mp4)
+
+▶ [Watch the 40-second demo](https://tracepanel.dev/video/demo-go.mp4)
+
 ## Setup
 
 ```bash
