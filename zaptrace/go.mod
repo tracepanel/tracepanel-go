@@ -3,7 +3,7 @@ module github.com/tracepanel/tracepanel-go/zaptrace
 go 1.26
 
 require (
-	github.com/tracepanel/tracepanel-go v0.14.0
+	github.com/tracepanel/tracepanel-go v0.15.0
 	go.uber.org/zap v1.28.0
 )
 

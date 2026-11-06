@@ -3,7 +3,7 @@ module github.com/tracepanel/tracepanel-go/grpctrace
 go 1.26.0
 
 require (
-	github.com/tracepanel/tracepanel-go v0.14.0
+	github.com/tracepanel/tracepanel-go v0.15.0
 	google.golang.org/grpc v1.85.0
 )
 
