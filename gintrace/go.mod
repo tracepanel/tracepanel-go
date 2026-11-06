@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/gin-gonic/gin v1.12.0
-	github.com/tracepanel/tracepanel-go v0.14.0
+	github.com/tracepanel/tracepanel-go v0.15.0
 )
 
 require (
