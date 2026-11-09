@@ -17,8 +17,36 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # paths-filter lists a pull request's files through the API.
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.code.outputs.code == 'true' }}
+    steps:
+      # A pull request that changes only the pages (the README and its images, the changelog) or the license tests
+      # nothing. The jobs below are required checks under their matrix names: they still run, each step skipped, so
+      # the checks pass.
+      - if: github.event_name == 'pull_request'
+        id: code
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - "**"
+              - "!**/*.md"
+              - "!LICENSE"
+              - "!docs/**"
+              - "!assets/**"
+
   test:
     name: Go ${{ matrix.go }} on ${{ matrix.os }}
+    needs: changes
     runs-on: ${{ matrix.os }}
     # A cold module and build cache: every module's tests with the race detector take most of it.
     timeout-minutes: 20
@@ -34,14 +62,17 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
       - uses: actions/setup-go@v7
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version: ${{ matrix.go }}
           cache-dependency-path: "**/go.sum"
       - name: gofmt
-        if: runner.os != 'Windows'
+        if: needs.changes.outputs.code == 'true' && runner.os != 'Windows'
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: go vet and the tests of every module
+        if: needs.changes.outputs.code == 'true'
         shell: bash
         run: |
           for module in $(sed -n 's/^MODULES := //p' Makefile); do
@@ -51,11 +82,12 @@ jobs:
           done
       # Once: the newest Go's.
       - name: Every module built for Windows, amd64 and arm64
-        if: runner.os == 'Linux' && matrix.go == '1.27'
+        if: needs.changes.outputs.code == 'true' && runner.os == 'Linux' && matrix.go == '1.27'
         run: make cross
 
   e2e:
     name: An app against the real agent on ${{ matrix.os }}
+    needs: changes
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -64,16 +96,20 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
       - uses: actions/setup-go@v7
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version: "1.27"
           cache-dependency-path: e2e/go.sum
       # The agent is AgentVersion's, downloaded from npm by the SDK itself and checked against its checksum, as an
       # app gets it; its OpenTelemetry port stays closed.
       - name: gofmt
-        if: runner.os != 'Windows'
+        if: needs.changes.outputs.code == 'true' && runner.os != 'Windows'
         run: test -z "$(gofmt -l e2e)" || (gofmt -l e2e && exit 1)
       - run: go vet ./...
+        if: needs.changes.outputs.code == 'true'
         working-directory: e2e
       - run: go test -race -count=1 ./...
+        if: needs.changes.outputs.code == 'true'
         working-directory: e2e
