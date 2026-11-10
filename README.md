@@ -68,7 +68,7 @@ and no agent is downloaded or started. `TRACEPANEL_ENABLED=1` records in any
 build, and `0` never. To record a built binary:
 
 ```bash
-go install github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.15.0
+go install github.com/tracepanel/tracepanel-go/cmd/tracepanel@v0.16.0
 tracepanel run ./shop
 ```
 

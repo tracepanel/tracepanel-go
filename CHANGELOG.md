@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.0 (2026-11-10)
+
+### Changed
+
+- Runs `tracepanel-agent` 0.16.0: a call no trace answered has no "not
+  traced" label on its row, a flame graph keeps its zoom while the chain
+  reloads, and the panel's details are never narrower than 24rem.
+
 ## 0.15.0 (2026-11-06)
 
 ### Changed
